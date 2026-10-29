@@ -82,9 +82,9 @@ const CHIT_ORDER := ["kill5", "kill4", "kill3", "shrink", "stun5", "frag", "grow
 
 ## Scialuppe: hangar e posti (il Robot e la Mascotte non contano; -1 = senza limite).
 const BOATS := {
-	"scout": {"name": "l'Esploratore", "cap": 2},
-	"saucer": {"name": "il Disco", "cap": 4},
-	"cockboat": {"name": "la Lancia", "cap": -1},
+	"scout": {"name": "l'Esploratore", "of": "dell'Esploratore", "cap": 2},
+	"saucer": {"name": "il Disco", "of": "del Disco", "cap": 4},
+	"cockboat": {"name": "la Lancia", "of": "della Lancia", "cap": -1},
 }
 ## Chi può avviare l'autodistruzione (da uno dei Ponti).
 const SD_CREW := ["captain", "first_officer", "eng_officer", "pilot_y", "pilot_b"]

@@ -21,6 +21,7 @@ var status_lbl: Label
 var hint_lbl: Label
 var dec_box: VBoxContainer
 var dec_scroll: ScrollContainer
+var foot_box: HFlowContainer
 var info_lbl: RichTextLabel
 var dice_box: HBoxContainer
 var dice_lbl: Label
@@ -126,7 +127,7 @@ func _build() -> void:
 	status_lbl = UI.wrap(UI.label("", 18, UI.ORANGE_L, UI.font_bold), 530)
 	rv.add_child(status_lbl)
 	dec_scroll = ScrollContainer.new()
-	dec_scroll.custom_minimum_size = Vector2(530, 300)
+	dec_scroll.custom_minimum_size = Vector2(530, 240)
 	dec_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	dec_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	rv.add_child(dec_scroll)
@@ -134,11 +135,15 @@ func _build() -> void:
 	dec_box.add_theme_constant_override("separation", 6)
 	dec_box.custom_minimum_size.x = 520
 	dec_scroll.add_child(dec_box)
+	foot_box = HFlowContainer.new()
+	foot_box.add_theme_constant_override("h_separation", 8)
+	foot_box.add_theme_constant_override("v_separation", 6)
+	rv.add_child(foot_box)
 	info_lbl = RichTextLabel.new()
 	info_lbl.bbcode_enabled = true
-	info_lbl.fit_content = true
-	info_lbl.scroll_active = false
-	info_lbl.custom_minimum_size = Vector2(530, 40)
+	info_lbl.fit_content = false
+	info_lbl.scroll_active = true
+	info_lbl.custom_minimum_size = Vector2(530, 84)
 	info_lbl.add_theme_font_size_override("normal_font_size", 17)
 	info_lbl.add_theme_font_size_override("bold_font_size", 17)
 	rv.add_child(info_lbl)
@@ -152,21 +157,26 @@ func _build() -> void:
 	dv.add_child(dice_lbl)
 	dice_box = HBoxContainer.new()
 	dice_box.add_theme_constant_override("separation", 4)
-	dice_box.custom_minimum_size.y = 46
+	dice_box.custom_minimum_size.y = 38
 	dv.add_child(dice_box)
 	# vetrina delle armi
-	rv.add_child(UI.heading("Vetrina delle armi", 24))
+	rv.add_child(UI.heading("Vetrina delle armi", 22))
 	arms_grid = GridContainer.new()
 	arms_grid.columns = 6
 	arms_grid.add_theme_constant_override("h_separation", 4)
 	arms_grid.add_theme_constant_override("v_separation", 6)
 	rv.add_child(arms_grid)
+	# ultime righe del diario, in basso sopra il tabellone
 	ticker = RichTextLabel.new()
 	ticker.bbcode_enabled = true
 	ticker.scroll_following = true
-	ticker.custom_minimum_size = Vector2(530, 96)
-	ticker.add_theme_font_size_override("normal_font_size", 16)
-	rv.add_child(ticker)
+	ticker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ticker.position = Vector2(12, 984)
+	ticker.size = Vector2(1310, 92)
+	ticker.add_theme_font_size_override("normal_font_size", 17)
+	ticker.add_theme_color_override("font_outline_color", UI.INK)
+	ticker.add_theme_constant_override("outline_size", 5)
+	add_child(ticker)
 	# diario completo
 	log_panel = PanelContainer.new()
 	log_panel.add_theme_stylebox_override("panel", UI.comic_style(Color(UI.SPACE, 0.97)))
@@ -373,9 +383,9 @@ func _show_dice(vals: Array, info: String, tot: int) -> void:
 	for c in dice_box.get_children():
 		c.queue_free()
 	for v in vals.slice(0, 12):
-		var r := UI.icon_rect(UI.die_tex(int(v)), Vector2(42, 42))
+		var r := UI.icon_rect(UI.die_tex(int(v)), Vector2(36, 36))
 		dice_box.add_child(r)
-		r.pivot_offset = Vector2(21, 21)
+		r.pivot_offset = Vector2(18, 18)
 		r.rotation = randf_range(-0.6, 0.6)
 		var tw := r.create_tween()
 		tw.tween_property(r, "rotation", 0.0, 0.25)
@@ -468,6 +478,8 @@ func _submit(r) -> void:
 func _clear_box() -> void:
 	for c in dec_box.get_children():
 		c.queue_free()
+	for c in foot_box.get_children():
+		c.queue_free()
 
 
 func _add_btn(text: String, cb: Callable, primary := false, w := 520.0) -> Button:
@@ -477,6 +489,17 @@ func _add_btn(text: String, cb: Callable, primary := false, w := 520.0) -> Butto
 		b.add_theme_font_size_override("font_size", 24)
 	b.pressed.connect(cb)
 	dec_box.add_child(b)
+	return b
+
+
+## Pulsante fisso sotto l'elenco (sempre visibile, anche quando l'elenco scorre).
+func _foot_btn(text: String, cb: Callable, primary := false, w := 256.0) -> Button:
+	var b := UI.button(text, w, 52, 19)
+	if primary:
+		UI.primary(b)
+		b.add_theme_font_size_override("font_size", 24)
+	b.pressed.connect(cb)
+	foot_box.add_child(b)
 	return b
 
 
@@ -507,7 +530,7 @@ func _build_decision() -> void:
 				_add_btn(str(req["options"][i]), func(): _submit(ii), i == 0)
 		"loc":
 			for a in req["allowed"]:
-				board.highlight[a] = UI.YELLOW
+				board.highlight[a] = UI.CYAN
 			_add_text("Tocca un'area evidenziata.")
 		"crew_setup":
 			_build_setup()
@@ -553,13 +576,13 @@ func _build_setup() -> void:
 			board.queue_redraw())
 		hb.add_child(ob)
 		dec_box.add_child(hb)
-	_add_btn("Suggerisci", func():
+	_foot_btn("Suggerisci", func():
 		var r: Dictionary = engine.ais[0].decide(engine, 0, pending)
 		for k in r:
 			setup_sel[int(k)] = r[k]
 			engine.crew[int(k)]["loc"] = r[k]
 		_build_decision())
-	_add_btn("Tutti ai posti!", func(): _submit(setup_sel.duplicate()), true)
+	_foot_btn("Tutti ai posti!", func(): _submit(setup_sel.duplicate()), true)
 
 
 func _cycle_setup(cid: int) -> void:
@@ -596,7 +619,7 @@ func _build_mplace() -> void:
 		dec_box.add_child(hb)
 	for a in pending["allowed"]:
 		board.highlight[a] = UI.SLIME
-	_add_btn("Suggerisci", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
+	_foot_btn("Suggerisci", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
 
 
 func _build_grow() -> void:
@@ -614,7 +637,7 @@ func _build_grow() -> void:
 		b.pressed.connect(func(): _submit(ll))
 		hb.add_child(b)
 		dec_box.add_child(hb)
-	_add_btn("Suggerisci", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
+	_foot_btn("Suggerisci", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
 
 
 # ---- movimento dei mostri
@@ -630,7 +653,7 @@ func _build_mmove() -> void:
 			board.highlight[a] = UI.SLIME
 		_add_text("Tocca un'area con Cose Verdi da muovere (in verde). Gli Adulti fanno 2 aree, i Piccoli 1; si fermano entrando dove c'è equipaggio sveglio o un recinto acceso.", UI.MUTED)
 	else:
-		_add_text("Scegli quali muovere, poi tocca la destinazione (in giallo).", UI.MUTED)
+		_add_text("Scegli quali muovere, poi tocca la destinazione (in azzurro).", UI.MUTED)
 		for m in engine.mons_at(sel_area):
 			if not engine.mon_mobile(m):
 				continue
@@ -650,14 +673,14 @@ func _build_mmove() -> void:
 			board.sel_pieces["m%d" % m] = true
 		var dests := engine.mon_moves(sel_mons)
 		for a in dests:
-			board.highlight[a] = UI.YELLOW
+			board.highlight[a] = UI.CYAN
 		board.selected_area = sel_area
 		_add_btn("Annulla selezione", func():
 			sel_area = ""
 			sel_mons = []
 			_build_decision())
-	_add_btn("Suggerisci una mossa", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
-	_add_btn("Fine movimento", func(): _submit({}), true)
+	_foot_btn("Suggerisci una mossa", func(): _submit(engine.ais[1].decide(engine, 1, pending)))
+	_foot_btn("Fine movimento", func(): _submit({}), true)
 
 
 # ---- attacchi dei mostri
@@ -705,7 +728,7 @@ func _build_mattack() -> void:
 		hb.add_child(ob)
 		dec_box.add_child(hb)
 	_plan_summary_m()
-	_add_btn("Attacca!", func():
+	_foot_btn("Attacca!", func():
 		var groups := {}
 		for m in plan:
 			if not groups.has(plan[m]):
@@ -715,8 +738,8 @@ func _build_mattack() -> void:
 		for c in groups:
 			atk.append([groups[c], c])
 		_submit({"area": plan_area, "atk": atk}), true)
-	_add_btn("Nessun attacco qui", func(): _submit({"area": plan_area, "atk": []}))
-	_add_btn("Fine degli attacchi", func(): _submit({}))
+	_foot_btn("Nessun attacco qui", func(): _submit({"area": plan_area, "atk": []}))
+	_foot_btn("Fine degli attacchi", func(): _submit({}))
 
 
 func _plan_summary_m() -> void:
@@ -750,8 +773,8 @@ func _build_grab() -> void:
 		b.pressed.connect(func(): _submit(ii))
 		hb.add_child(b)
 		dec_box.add_child(hb)
-	_add_btn("Suggerisci", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
-	_add_btn("Armi pronte!", func(): _submit(-1), true)
+	_foot_btn("Suggerisci", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+	_foot_btn("Armi pronte!", func(): _submit(-1), true)
 
 
 # ---- movimento dell'equipaggio
@@ -781,9 +804,9 @@ func _build_cmove() -> void:
 		dec_box.add_child(hb)
 		var dests := engine.crew_moves(c)
 		for a in dests:
-			board.highlight[a] = UI.YELLOW
+			board.highlight[a] = UI.CYAN
 		if not dests.is_empty():
-			_add_text("Tocca la destinazione (in giallo).", UI.MUTED)
+			_add_text("Tocca la destinazione (in azzurro).", UI.MUTED)
 		for s in engine.special_actions(c):
 			var ss: Dictionary = s
 			if ss["act"] == "escape":
@@ -793,9 +816,9 @@ func _build_cmove() -> void:
 		_add_btn("Scegli un altro membro", func():
 			sel_crew = -1
 			_build_decision())
-	_add_btn("Suggerisci una mossa", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+	_foot_btn("Suggerisci una mossa", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
 	if not disc or engine.moved.size() >= 1:
-		_add_btn("Fine movimento", func(): _submit({}), true)
+		_foot_btn("Fine movimento", func(): _submit({}), true)
 
 
 func _escape_dialog(b: String) -> void:
@@ -816,13 +839,13 @@ func _escape_dialog(b: String) -> void:
 			else:
 				chosen.erase(cc))
 		dec_box.add_child(cb)
-	_add_btn("Partenza!", func():
+	_foot_btn("Partenza!", func():
 		var ids := chosen.keys()
 		if not engine.boat_room(b, ids):
 			status_lbl.text = "Troppi a bordo!"
 			return
 		_submit({"act": "escape", "b": b, "ids": ids}), true)
-	_add_btn("Annulla", func(): _build_decision())
+	_foot_btn("Annulla", func(): _build_decision())
 
 
 # ---- attacchi dell'equipaggio
@@ -833,8 +856,8 @@ func _build_cattack() -> void:
 		board.highlight[a] = UI.RED
 	if plan_area == "" or not (plan_area in areas):
 		_add_text("Tocca un'area in rosso per preparare l'attacco: chi può colpirla, con le mani o con l'arma.", UI.MUTED)
-		_add_btn("Suggerisci un attacco", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
-		_add_btn("Fine degli attacchi", func(): _submit({}), true)
+		_foot_btn("Suggerisci un attacco", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+		_foot_btn("Fine degli attacchi", func(): _submit({}), true)
 		return
 	board.selected_area = plan_area
 	var ms := engine.mons_at(plan_area)
@@ -886,22 +909,22 @@ func _build_cattack() -> void:
 		hb.add_child(ob)
 		dec_box.add_child(hb)
 	_plan_summary_c()
-	_add_btn("Suggerisci", func():
+	_foot_btn("Suggerisci", func():
 		plan = {}
 		for x in engine.ais[0]._plan_area(engine, plan_area):
 			plan[int(x[0])] = x
 		_build_decision())
-	_add_btn("Attacca!", func():
+	_foot_btn("Attacca!", func():
 		var atk := plan.values()
 		if atk.is_empty():
 			status_lbl.text = "Nessun attacco dichiarato."
 			return
 		_submit({"area": plan_area, "atk": atk}), true)
-	_add_btn("Cambia area", func():
+	_foot_btn("Cambia area", func():
 		plan_area = ""
 		plan = {}
 		_build_decision())
-	_add_btn("Fine degli attacchi", func(): _submit({}))
+	_foot_btn("Fine degli attacchi", func(): _submit({}))
 
 
 func _plan_summary_c() -> void:

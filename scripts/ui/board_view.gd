@@ -136,10 +136,23 @@ func _draw_area(a: String) -> void:
 		items.append(["c", c])
 	var ms := e.mons_at(a)
 	ms.sort_custom(func(x, y): return D.MON_ORDER.find(e.mon[x]["l"]) < D.MON_ORDER.find(e.mon[y]["l"]) or (e.mon[x]["l"] == e.mon[y]["l"] and x < y))
-	for m in ms:
-		items.append(["m", m])
-	var floor := e.weapons_at(a)
 	var slots: Array = e.AR[a]["slots"]
+	if items.size() + ms.size() > slots.size():
+		# area affollata: le Cose Verdi uguali si impilano in una sola pedina con il numero
+		var groups := {}
+		var order := []
+		for m in ms:
+			var k: String = e.mon[m]["l"] + ("s" if e.mon[m]["st"] else "")
+			if not groups.has(k):
+				groups[k] = []
+				order.append(k)
+			groups[k].append(m)
+		for k in order:
+			items.append(["g", groups[k]])
+	else:
+		for m in ms:
+			items.append(["m", m])
+	var floor := e.weapons_at(a)
 	var s := sc()
 	var tok := TOK * s
 	if items.size() > slots.size() and e.AR[a].has("dense"):
@@ -147,6 +160,7 @@ func _draw_area(a: String) -> void:
 		if dense.size() > slots.size():
 			slots = dense
 			tok = TOK * 0.72 * s
+	tok = minf(tok, _spacing(a, slots) * s * 0.96)
 	var n := slots.size()
 	for i in items.size():
 		var sl: Array = slots[i % n]
@@ -156,9 +170,31 @@ func _draw_area(a: String) -> void:
 		var r := Rect2(p - Vector2(tok, tok) * 0.5, Vector2(tok, tok))
 		if it[0] == "c":
 			_draw_crew(it[1], r)
-		else:
+			_hits.append([r, "c", it[1]])
+		elif it[0] == "m":
 			_draw_mon(it[1], r)
-		_hits.append([r, it[0], it[1]])
+			_hits.append([r, "m", it[1]])
+		else:
+			var g: Array = it[1]
+			if g.size() > 1:
+				draw_rect(Rect2(r.position + Vector2(6, -6), r.size).grow(2), UI.INK)
+				draw_texture_rect(UI.mon_tex(e.mon[g[0]]["l"]), Rect2(r.position + Vector2(6, -6), r.size), false, Color(0.8, 0.8, 0.8))
+			_draw_mon(g[0], r, false)
+			var sel := false
+			for m in g:
+				if sel_pieces.has("m%d" % m):
+					sel = true
+			if sel:
+				draw_rect(r.grow(3), UI.YELLOW, false, 4.0)
+			if g.size() > 1:
+				_badge(r.position + Vector2(r.size.x, r.size.y), "×%d" % g.size(), UI.CREAM)
+			var tg := []
+			for m in g:
+				if tags.has(m):
+					tg.append(str(tags[m]))
+			if not tg.is_empty():
+				_badge(r.position, tg[0] if tg.size() == 1 else "%s-%s" % [tg[0], tg[tg.size() - 1]], UI.ORANGE)
+			_hits.append([r, "m", g[0]])
 	# armi a terra: una fila in basso nell'area
 	if not floor.is_empty():
 		var cnt := {}
@@ -187,6 +223,18 @@ func _draw_area(a: String) -> void:
 			_hits.append([r, "w", w])
 
 
+var _sp := {}
+func _spacing(a: String, slots: Array) -> float:
+	var key := a + str(slots.size())
+	if not _sp.has(key):
+		var m := 999.0
+		for i in slots.size():
+			for j in range(i + 1, slots.size()):
+				m = minf(m, Vector2(slots[i][0], slots[i][1]).distance_to(Vector2(slots[j][0], slots[j][1])))
+		_sp[key] = minf(m, TOK)
+	return _sp[key]
+
+
 func _draw_crew(c: int, r: Rect2) -> void:
 	var sel := sel_pieces.has("c%d" % c)
 	if sel:
@@ -211,9 +259,9 @@ func _draw_crew(c: int, r: Rect2) -> void:
 		_badge(r.position + Vector2(0, 0), str(crew_tags[c]), UI.ORANGE)
 
 
-func _draw_mon(m: int, r: Rect2) -> void:
+func _draw_mon(m: int, r: Rect2, with_tag := true) -> void:
 	var sel := sel_pieces.has("m%d" % m)
-	if sel:
+	if sel and with_tag:
 		draw_rect(r.grow(5), UI.YELLOW)
 	draw_rect(r.grow(2), UI.INK)
 	var t := UI.mon_tex(e.mon[m]["l"])
@@ -228,7 +276,7 @@ func _draw_mon(m: int, r: Rect2) -> void:
 		if e.moved.has(m) and e.phase == "mmove":
 			mod = Color(0.8, 0.8, 0.8)
 		draw_texture_rect(t, r, false, mod)
-	if tags.has(m):
+	if tags.has(m) and with_tag:
 		_badge(r.position, str(tags[m]), UI.ORANGE)
 
 

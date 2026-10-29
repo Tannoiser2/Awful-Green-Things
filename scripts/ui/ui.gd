@@ -26,6 +26,7 @@ const INK := Color("#141414")
 const TEXT := Color("#fff6d8")
 const MUTED := Color("#a9c3a0")
 const CREW_C := Color("#4fb3ff")
+const CYAN := Color("#3ff0ff")
 const MON_C := Color("#7be04a")
 
 static var _tex := {}

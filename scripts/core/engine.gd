@@ -843,7 +843,7 @@ func _apply_mattack(r: Dictionary) -> void:
 		var tot := _roll_show(nd, "Cose Verdi contro %s" % cname(cid))
 		var con: int = cdef(cid)["con"]
 		if tot >= con:
-			log_msg("%d %s attaccano %s: %d contro %d. Divorato!" % [ms.size(), "Cose Verdi" if ms.size() > 1 else "Cosa Verde", cname(cid), tot, con])
+			log_msg("%s %s: %d contro %d. Divorato!" % [_attackers(ms), cname(cid), tot, con])
 			_crew_dies(cid)
 			_fx("kill_crew", {"c": cid, "area": a})
 			if cid == rob:
@@ -851,7 +851,7 @@ func _apply_mattack(r: Dictionary) -> void:
 			else:
 				_eat(ms)
 		else:
-			log_msg("%d %s attaccano %s: %d contro %d. Respinti." % [ms.size(), "Cose Verdi" if ms.size() > 1 else "Cosa Verde", cname(cid), tot, con])
+			log_msg("%s %s: %d contro %d. Respinti." % [_attackers(ms), cname(cid), tot, con])
 	# i mostri dell'area che non hanno attaccato rinunciano
 	for mid in mons_at(a):
 		attacked[mid] = true
@@ -859,6 +859,17 @@ func _apply_mattack(r: Dictionary) -> void:
 		log_msg("In %s le Cose Verdi non attaccano." % area_name(a))
 	last_area = a
 	changed.emit()
+
+
+func _attackers(ms: Array) -> String:
+	var cnt := {}
+	for m in ms:
+		cnt[mon[m]["l"]] = cnt.get(mon[m]["l"], 0) + 1
+	var parts := []
+	for l in D.MON_ORDER:
+		if cnt.has(l):
+			parts.append("%d %s" % [cnt[l], D.MON[l]["plural"] if cnt[l] > 1 else D.MON[l]["name"]])
+	return ", ".join(parts) + (" attaccano" if ms.size() > 1 else " attacca")
 
 
 func _crew_dies(cid: int) -> void:
@@ -1565,7 +1576,7 @@ func _end_timeout() -> void:
 func _epilogue_boat(bt: Dictionary) -> void:
 	var people: Array = bt["crew"].duplicate()
 	var bname: String = D.BOATS[bt["b"]]["name"]
-	log_msg("Epilogo: il viaggio di %s." % bname)
+	log_msg("Epilogo: il viaggio %s." % D.BOATS[bt["b"]]["of"])
 	var step := 1
 	var guard := 0
 	var years := 0
