@@ -63,6 +63,10 @@ static func weapon_tex(t: String) -> Texture2D:
 	return tex("res://assets/weapons/%s.png" % t)
 
 
+static func gear_tex(t: String) -> Texture2D:
+	return tex("res://assets/counters/%s.png" % {"jet": "jet_suit", "mover": "cargo_mover", "soot": "ook_soot"}.get(t, t))
+
+
 static func chit_tex(k: String) -> Texture2D:
 	return tex("res://assets/weapons/%s.png" % D.CHITS[k]["img"])
 

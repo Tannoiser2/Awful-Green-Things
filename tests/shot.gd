@@ -38,6 +38,11 @@ func _run() -> void:
 	await wait(8)
 	if mode == "menu":
 		await shot("menu")
+		main.current.scenario = 2
+		main.current._store()
+		main.show_menu()
+		await wait(6)
+		await shot("menu_ammutinamento")
 		main.current._online_panel()
 		await wait(4)
 		await shot("online")

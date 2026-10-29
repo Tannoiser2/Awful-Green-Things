@@ -40,6 +40,7 @@ func _ready() -> void:
 
 func set_engine(eng: AGTEngine) -> void:
 	e = eng
+	fit()
 
 
 func refresh() -> void:
@@ -49,10 +50,22 @@ func refresh() -> void:
 func fit() -> void:
 	if tex == null or size.x < 10:
 		return
-	base_scale = minf(size.x / tex.get_width(), size.y / tex.get_height())
+	var bb := _bounds()
+	base_scale = minf(size.x / bb.size.x, size.y / bb.size.y)
 	zoom = 1.0
-	offset = (size - tex.get_size() * base_scale) * 0.5
+	offset = (size - bb.size * base_scale) * 0.5 - bb.position * base_scale
 	queue_redraw()
+
+
+## Rettangolo da inquadrare: il tabellone, più lo scafo e lo spazio con le regole «Fuori dalla Znutar».
+func _bounds() -> Rect2:
+	var r := Rect2(Vector2.ZERO, tex.get_size())
+	if e != null and e.outside():
+		for a in e.AR:
+			if e.is_out(a):
+				for q in e.AR[a]["poly"]:
+					r = r.expand(Vector2(q[0], q[1]))
+	return r
 
 
 func sc() -> float:
@@ -107,9 +120,37 @@ func _draw() -> void:
 	_hits = []
 	if tex == null:
 		return
+	var outer := e != null and e.outside()
+	if outer:
+		# lo spazio attorno alla nave
+		for a in e.AR:
+			if e.is_space(a):
+				var sp := _screen_poly(a)
+				draw_colored_polygon(sp, Color("#081428"))
+				var spl := sp.duplicate()
+				spl.append(sp[0])
+				draw_polyline(spl, Color("#2d4a7a"), 2.0)
 	draw_texture_rect(tex, Rect2(offset, tex.get_size() * sc()), false)
 	if e == null:
 		return
+	if outer:
+		for a in e.AR:
+			if e.AR[a]["kind"] == "scafo":
+				var kp := _screen_poly(a)
+				draw_colored_polygon(kp, Color(0.62, 0.68, 0.78, 0.55))
+				var kpl := kp.duplicate()
+				kpl.append(kp[0])
+				draw_polyline(kpl, Color("#20304a"), 2.0)
+				var lk: String = str(e.AR[a].get("airlock", ""))
+				if lk != "":
+					var cc: Array = e.AR[a]["center"]
+					_badge(to_screen(Vector2(cc[0], cc[1])) + Vector2(0, -TOK * sc() * 0.62), "🔒" if e.locked.has(lk) else "⇅", Color("#cfe3ff"))
+			elif e.is_space(a):
+				var c2: Array = e.AR[a]["center"]
+				var t: String = String(e.AR[a]["name"]).to_upper()
+				var fs := int(clampf(20.0 * zoom, 14, 30))
+				var tw := UI.font_comic.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+				draw_string(UI.font_comic, to_screen(Vector2(c2[0], c2[1])) - Vector2(tw * 0.5, 0), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#5d7fb8"))
 	var glow := 0.5 + 0.5 * sin(pulse * 4.0)
 	for a in highlight:
 		var poly := _screen_poly(a)
@@ -130,19 +171,52 @@ func _draw() -> void:
 		var pl2 := _screen_poly(hover)
 		pl2.append(pl2[0])
 		draw_polyline(pl2, Color(1, 1, 1, 0.55), 2.0)
+	for a in e.pods_gone:
+		draw_colored_polygon(_screen_poly(a), Color(0.05, 0.05, 0.05, 0.8))
+	for a in e.webs:
+		_draw_web(a)
+	var holes_done := {}
+	for a in e.extra_adj:
+		for b in e.extra_adj[a]:
+			var key: String = a + "|" + b if a < b else b + "|" + a
+			if holes_done.has(key):
+				continue
+			holes_done[key] = true
+			var hp := to_screen(e.hole_point(a, b))
+			draw_circle(hp, 14.0 * sc() / base_scale * 0.6, UI.INK)
+			draw_circle(hp, 10.0 * sc() / base_scale * 0.6, Color("#5cc23a"))
 	for a in e.AR:
 		_draw_area(a)
+
+
+func _draw_web(a: String) -> void:
+	var c: Array = e.AR[a]["center"]
+	var p := to_screen(Vector2(c[0], c[1]))
+	var r := 70.0 * sc()
+	var col := Color(1, 1, 1, 0.75)
+	for i in 8:
+		var ang := TAU * i / 8.0
+		draw_line(p, p + Vector2(cos(ang), sin(ang)) * r, col, 1.5)
+	for k in range(1, 4):
+		var pts := PackedVector2Array()
+		for i in 9:
+			var ang2 := TAU * i / 8.0
+			pts.append(p + Vector2(cos(ang2), sin(ang2)) * r * k / 3.0)
+		draw_polyline(pts, col, 1.5)
 
 
 func _draw_area(a: String) -> void:
 	var items := []
 	if e.hidden.has(a):
 		items.append(["h", (e.hidden[a] as Array).size()])
+	for b in e.bout:
+		if e.bout[b]["loc"] == a:
+			items.append(["b", b])
 	for c in e.crew_at(a):
 		items.append(["c", c])
 	for c in e.captives_at(a):
 		items.append(["p", c])
-	var ms := e.mons_at(a)
+	var ms := e.seen_mons_at(a) if (view != null and view.fog()) else e.mons_at(a)
 	ms.sort_custom(func(x, y): return D.MON_ORDER.find(e.mon[x]["l"]) < D.MON_ORDER.find(e.mon[y]["l"]) or (e.mon[x]["l"] == e.mon[y]["l"] and x < y))
 	var slots: Array = e.AR[a]["slots"]
 	if items.size() + ms.size() > slots.size():
@@ -150,7 +224,7 @@ func _draw_area(a: String) -> void:
 		var groups := {}
 		var order := []
 		for m in ms:
-			var k: String = e.mon[m]["l"] + ("s" if e.mon[m]["st"] else "")
+			var k: String = e.mon[m]["l"] + ("s" if e.mon[m]["st"] else "") + str(e.mon[m].get("mega", ""))
 			if not groups.has(k):
 				groups[k] = []
 				order.append(k)
@@ -161,6 +235,13 @@ func _draw_area(a: String) -> void:
 		for m in ms:
 			items.append(["m", m])
 	var floor := e.weapons_at(a)
+	if e.outside():
+		var gseen := {}
+		for g in e.gear_at(a):
+			var gt: String = e.gear[g]["t"]
+			if not gseen.has(gt):
+				gseen[gt] = true
+				floor.append(-1000 - g)
 	var s := sc()
 	var tok := TOK * s
 	if items.size() > slots.size() and e.AR[a].has("dense"):
@@ -179,6 +260,13 @@ func _draw_area(a: String) -> void:
 		if it[0] == "c":
 			_draw_crew(it[1], r)
 			_hits.append([r, "c", it[1]])
+		elif it[0] == "b":
+			var bt: String = it[1]
+			var br := r.grow(tok * 0.15)
+			draw_rect(br.grow(2), UI.INK)
+			draw_texture_rect(UI.tex("res://assets/counters/boat_%s.png" % bt), br, false, Color(1, 1, 1, 0.45) if e.bout[bt]["gone"] else Color.WHITE)
+			if e.bout[bt]["gone"]:
+				_badge(br.get_center(), "via!", UI.ORANGE)
 		elif it[0] == "h":
 			var nh: int = it[1]
 			for j in range(mini(nh, 4) - 1, -1, -1):
@@ -222,7 +310,7 @@ func _draw_area(a: String) -> void:
 		var cnt := {}
 		var order := []
 		for w in floor:
-			var t := e.wtype(w)
+			var t := e.wtype(w) if w >= 0 else "g_" + str(e.gear[-1000 - w]["t"])
 			if not cnt.has(t):
 				order.append(w)
 			cnt[t] = cnt.get(t, 0) + 1
@@ -234,8 +322,19 @@ func _draw_area(a: String) -> void:
 			start.y = maxf(start.y, to_screen(Vector2(last[0], last[1])).y + tok * 0.6)
 		for j in order.size():
 			var w: int = order[j]
-			var t := e.wtype(w)
 			var r := Rect2(start + Vector2(j * wt * 1.1, 0), Vector2(wt, wt))
+			if w <= -1000:
+				var gt2: String = e.gear[-1000 - w]["t"]
+				var gn := 0
+				for g2 in e.gear_at(a):
+					if e.gear[g2]["t"] == gt2:
+						gn += 1
+				draw_rect(r.grow(1.5), UI.INK)
+				draw_texture_rect(UI.gear_tex(gt2), r, false)
+				if gn > 1:
+					_badge(r.position + Vector2(r.size.x, 0), "×%d" % gn, UI.CREAM)
+				continue
+			var t := e.wtype(w)
 			if e.wpn[w]["on"]:
 				draw_rect(r.grow(4), Color(1, 0.95, 0.2, 0.6 + 0.4 * sin(pulse * 9.0)))
 			draw_rect(r.grow(1.5), UI.INK)
@@ -277,6 +376,10 @@ func _draw_crew(c: int, r: Rect2) -> void:
 		var wr := Rect2(r.position + r.size * 0.55, r.size * 0.5)
 		draw_rect(wr.grow(1.5), UI.INK)
 		draw_texture_rect(UI.weapon_tex(e.wtype(w)), wr, false)
+	if e.outside() and e.gear_of(c) != "":
+		var gr := Rect2(r.position + Vector2(-r.size.x * 0.1, r.size.y * 0.55), r.size * 0.5)
+		draw_rect(gr.grow(1.5), UI.INK)
+		draw_texture_rect(UI.gear_tex(e.gear_of(c)), gr, false)
 	if not e.awake(c):
 		_badge(r.position + Vector2(r.size.x * 0.5, r.size.y * 0.3), "zZ", Color("#b9c7ff"))
 	if e.busy.has(c):
@@ -302,6 +405,13 @@ func _draw_mon(m: int, r: Rect2, with_tag := true) -> void:
 		if e.moved.has(m) and e.phase == "mmove":
 			mod = Color(0.8, 0.8, 0.8)
 		draw_texture_rect(t, r, false, mod)
+	if e.is_mega(m):
+		draw_rect(r.grow(3), UI.ORANGE, false, 3.0)
+		_badge(r.position + Vector2(r.size.x * 0.5, r.size.y), String(D.MEGA[e.mon[m]["mega"]]["short"]), UI.SLIME)
+	if e.mon[m].has("w"):
+		var wr := Rect2(r.position + r.size * 0.55, r.size * 0.5)
+		draw_rect(wr.grow(1.5), UI.INK)
+		draw_texture_rect(UI.weapon_tex(e.wtype(e.mon[m]["w"])), wr, false)
 	if tags.has(m) and with_tag:
 		_badge(r.position, str(tags[m]), UI.ORANGE)
 

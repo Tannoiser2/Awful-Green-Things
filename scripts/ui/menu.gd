@@ -11,6 +11,11 @@ const VARIANTS := [
 	["extra_adult", "Un Adulto in più per le Cose Verdi", "Il regolamento lo suggerisce per aiutare le Cose Verdi se perdono troppo spesso."],
 	["beamer2", "Comunicatore a due frequenze", "Variante per aiutare l'Equipaggio: se il primo effetto del Raggio comunicatore delude, si può provare\nl'altra frequenza (un nuovo gettone) e poi scegliere ogni volta il migliore dei due."],
 	["grow_eggs", "«Cresce» fa deporre le uova", "Regola delle vecchie edizioni TSR: un Adulto colpito da «Cresce» depone un Uovo.\nNell'8ª edizione no."],
+	["outside", "Fuori dalla Znutar", "Lo scafo e lo spazio attorno alla nave: camere stagne, tute a reazione, carrelli elevatori,\nla tuta della Mascotte e le scialuppe che volano attorno alla Znutar (Dragon / edizione Steve Jackson)."],
+	["megadults", "Megadulti (Revenge)", "Revenge of the Awful Green Things: un Adulto che mangia, che cresce o colpito da «Cresce» può trasformarsi\nin un Megadulto: Melmoso, Covatrice, Lanciafiamme, Tentacolone, Corridore, Corazzato, Tessitore o Cervellone."],
+	["kitchen", "Cucina, Mensa e Zgwortz (Revenge)", "In Cucina e in Mensa le Cose Verdi senza equipaggio intorno assaggiano di tutto (un dado a testa);\nlo Zgwortz non ha un gettone fisso: ogni barattolo tira sulla sua tabella."],
+	["weapon_var", "Varianti delle armi (Revenge)", "«1 dado di Frammenti» resta solo con 1-2 su un dado; gli Adulti possono mangiare le armi già usate;\nuna tanica che esplode in un Serbatoio fa saltare tutto il Serbatoio (-20 punti all'equipaggio)."],
+	["hidden_mons", "Mostri nascosti (Revenge)", "Chi guida solo l'equipaggio contro l'IA o online vede le Cose Verdi solo in linea di vista di qualcuno\nsveglio, e le Uova solo nella stessa area o lungo i corridoi aperti; si attacca solo ciò che si vede."],
 	["alt_epilogue", "Epilogo alternativo", "Il viaggio di ritorno con 35 eventi e il d10: scialuppe danneggiate, perse o senza scorte,\nalieni, buchi neri, relitti e portali temporali; Pilota, Dottore, Tecnico e gli altri aiutano."],
 ]
 
@@ -107,7 +112,7 @@ func _ready() -> void:
 		cb.text = v[1]
 		cb.tooltip_text = v[2]
 		cb.button_pressed = variants.get(v[0], false)
-		cb.add_theme_font_size_override("font_size", 21)
+		cb.add_theme_font_size_override("font_size", 19)
 		var key: String = v[0]
 		cb.toggled.connect(func(on): variants[key] = on)
 		cb.custom_minimum_size.x = 535
@@ -284,9 +289,15 @@ func _config() -> Dictionary:
 	for v in VARIANTS:
 		if variants.get(v[0], false):
 			opts[v[0]] = true
+	if opts.has("weapon_var"):
+		opts.erase("weapon_var")
+		opts["frag_reroll"] = true
+		opts["eat_weapons"] = true
+		opts["pod_explode"] = true
 	if scenario == 1:
 		opts["solo"] = true
-		opts.erase("extra_adult")
+		for k in ["extra_adult", "outside", "megadults", "kitchen", "frag_reroll", "eat_weapons", "pod_explode", "hidden_mons"]:
+			opts.erase(k)
 	if scenario == 2:
 		opts["mutiny"] = true
 	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts, "view3d": view3d == 1}

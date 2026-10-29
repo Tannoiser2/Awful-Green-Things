@@ -92,9 +92,20 @@ func setup(config: Dictionary) -> void:
 	for s in config["seats"]:
 		players.append({"name": str(s.get("name", "")), "ai": bool(s.get("ai", false)), "level": int(s.get("level", 1))})
 	AR = D.areas()
+	gear = {}
+	if outside():
+		AR = AR.duplicate()
+		for a in D.outside_data()["areas"]:
+			AR[a["id"]] = a
+		var gid := 0
+		for t in D.GEAR:
+			for a in D.GEAR[t]["start"]:
+				for i in int(D.GEAR[t]["start"][a]):
+					gear[gid] = {"t": t, "loc": a, "c": -1, "out": false}
+					gid += 1
 	crew = {}
 	for i in D.CREW.size():
-		crew[i] = {"k": D.CREW[i]["k"], "loc": "", "st": 0, "w": -1, "state": "ok", "team": 0, "slow": false}
+		crew[i] = {"k": D.CREW[i]["k"], "loc": "", "st": 0, "w": -1, "state": "ok", "team": 0, "slow": false, "g": -1, "boat": ""}
 		if mutiny() and D.MUT_FIRST.has(D.CREW[i]["k"]):
 			crew[i]["team"] = 2
 	wpn = {}
@@ -227,7 +238,11 @@ func is_corridor(a: String) -> bool:
 
 
 func adj(a: String) -> Array:
-	return AR[a]["adj"]
+	if extra_adj.is_empty() and pods_gone.is_empty():
+		return AR[a]["adj"]
+	var out: Array = AR[a]["adj"].duplicate()
+	out.append_array(extra_adj.get(a, []))
+	return out.filter(func(x): return not pods_gone.has(x))
 
 
 ## Aree in linea di vista (l'area stessa compresa).
@@ -240,6 +255,14 @@ func los(a: String) -> Array:
 ## Sezione colpita da gas o carburante: la nube si ferma solo ai portelli, quindi in un corridoio
 ## riempie tutti i tratti collegati da passaggi aperti.
 func section(a: String) -> Array:
+	if is_out(a):
+		# fuori dalla nave l'esplosione investe tutta la zona di spazio e il suo scafo
+		var sp := space_of(a)
+		var o := []
+		for x in AR:
+			if space_of(x) == sp:
+				o.append(x)
+		return o
 	var out := [a]
 	var q := [a]
 	while not q.is_empty():
@@ -293,14 +316,35 @@ func mons_at(a: String) -> Array:
 
 
 func mcon(id: int) -> int:
+	var mg: String = mon[id].get("mega", "")
+	if mg != "":
+		return int(D.MEGA[mg]["con"])
 	return D.MON[mon[id]["l"]]["con"]
 
 
 func matt(id: int) -> int:
+	var mg: String = mon[id].get("mega", "")
+	if mg == "breeder":
+		for o in mons_at(mon[id]["loc"]):
+			if mon[o]["l"] in ["E", "B"]:
+				return 5
+		return 1
+	if mg != "":
+		return int(D.MEGA[mg]["att"])
 	return D.MON[mon[id]["l"]]["att"]
 
 
+func mmov(id: int) -> int:
+	var mg: String = mon[id].get("mega", "")
+	if mg != "":
+		return int(D.MEGA[mg]["mov"])
+	return int(D.MON[mon[id]["l"]]["mov"])
+
+
 func mname(id: int) -> String:
+	var mg: String = mon[id].get("mega", "")
+	if mg != "":
+		return String(D.MEGA[mg]["short"])
 	return D.MON[mon[id]["l"]]["name"]
 
 
@@ -379,19 +423,24 @@ func effect_of(t: String) -> String:
 
 ## Aree raggiungibili: area -> percorso (senza l'area di partenza).
 ## Chi entra in un'area dove deve fermarsi non prosegue; uscire si può sempre.
-func reach(from: String, mv: int, for_crew: bool) -> Dictionary:
+func reach(from: String, mv: int, for_crew: bool, mode := "walk", unit := -1) -> Dictionary:
 	var out := {}
 	var q := [[from, []]]
 	var seen := {from: 0}
+	if outside() and mv > 0:
+		# la camera stagna si attraversa solo partendo accanto, e prende tutto il turno
+		var other := lock_other(from)
+		if other != "" and mode != "mover" and _lock_open(from, other, for_crew, unit):
+			out[other] = [other]
 	while not q.is_empty():
 		var it: Array = q.pop_front()
 		var cur: String = it[0]
 		var path: Array = it[1]
 		if path.size() >= mv:
 			continue
-		if cur != from and _must_stop(cur, for_crew):
+		if cur != from and _must_stop(cur, for_crew) and not (mode != "walk" and is_space(cur)):
 			continue
-		for n in adj(cur):
+		for n in _nbrs(cur, mode):
 			if n == from or (seen.has(n) and seen[n] <= path.size() + 1):
 				continue
 			seen[n] = path.size() + 1
@@ -408,7 +457,36 @@ func _must_stop(a: String, for_crew: bool) -> bool:
 		return true
 	if for_crew and hidden.has(a):
 		return true
+	if for_crew and webs.has(a):
+		return true
 	return hot_for_crew(a) if for_crew else blocks_mon(a)
+
+
+## Vicini per chi cammina, per le tute a reazione (anche lo spazio) e per i carrelli elevatori.
+func _nbrs(a: String, mode: String) -> Array:
+	if mode == "walk" or not outside():
+		return adj(a)
+	if mode == "jet":
+		var out: Array = adj(a).duplicate()
+		for n in AR[a].get("fly", []):
+			if not out.has(n):
+				out.append(n)
+		if is_space(a):
+			return out
+		var o := lock_other(a)
+		if o != "" and not out.has(o):
+			out.append(o)
+		return out
+	# carrello: solo stiva, hangar e spazio
+	if a in D.MOVER_ROOMS:
+		return [AR["s_" + a]["space"]]
+	if is_space(a):
+		var out2: Array = adj(a).duplicate()
+		for r in D.MOVER_ROOMS:
+			if AR["s_" + r]["space"] == a:
+				out2.append(r)
+		return out2
+	return []
 
 
 ## Distanza in passi (ignorando gli arresti), per l'IA.
@@ -421,7 +499,13 @@ func dist(a: String, b: String) -> int:
 		var q := [a]
 		while not q.is_empty():
 			var x: String = q.pop_front()
-			for n in adj(x):
+			var nb: Array = adj(x)
+			if outside():
+				nb = nb.duplicate()
+				var o := lock_other(x)
+				if o != "":
+					nb.append(o)
+			for n in nb:
 				if not d.has(n):
 					d[n] = d[x] + 1
 					q.append(n)
@@ -434,18 +518,22 @@ func dist(a: String, b: String) -> int:
 func crew_can_act(id: int) -> bool:
 	if mutiny() and team_of(id) != cur_team:
 		return false
+	if crew[id].get("boat", "") != "" and bout.has(crew[id]["boat"]) and bout[crew[id]["boat"]]["gone"]:
+		return false
 	return on_board(id) and awake(id) and not busy.has(id)
 
 
 func crew_moves(id: int) -> Dictionary:
 	if not crew_can_act(id) or moved.has(id):
 		return {}
-	var mv := int(cdef(id)["mov"])
+	if crew[id].get("boat", "") != "":
+		return {}   # chi è su una scialuppa si muove con lei
+	var mv := c_mov(id)
 	if crew[id].get("slow", false):
 		mv = mv / 2
 	if mv <= 0:
 		return {}
-	var r := reach(crew[id]["loc"], mv, true)
+	var r := reach(crew[id]["loc"], mv, true, _mode(id), id)
 	if discovery:
 		var out := {}
 		for a in r:
@@ -465,6 +553,22 @@ func crew_targets(id: int, usew: bool) -> Array:
 		return []
 	var loc: String = crew[id]["loc"]
 	var out: Array = []
+	var bt: String = crew[id].get("boat", "")
+	if is_space(loc):
+		# dallo spazio si colpisce lo scafo della propria zona: a mani nude solo con tuta o carrello,
+		# dalle scialuppe solo con le armi (e non dalla Lancia)
+		if bt != "" and (not usew or bt == "cockboat"):
+			return []
+		if not usew and not (gear_of(id) in ["jet", "mover"]):
+			return []
+		if usew:
+			var w0: int = crew[id]["w"]
+			if w0 < 0 or not works_outside(wtype(w0)) or D.WEAPONS[wtype(w0)]["range"] == "none":
+				return []
+		for x in AR:
+			if AR[x]["kind"] == "scafo" and space_of(x) == space_of(loc):
+				out.append(x)
+		return out
 	if not usew:
 		out = [loc]
 	else:
@@ -472,6 +576,8 @@ func crew_targets(id: int, usew: bool) -> Array:
 		if w < 0 or discovery:
 			return []
 		var t := wtype(w)
+		if outside() and is_out(loc) and not works_outside(t):
+			return []
 		match D.WEAPONS[t]["range"]:
 			"same":
 				out = [loc]
@@ -486,6 +592,8 @@ func crew_targets(id: int, usew: bool) -> Array:
 		out = out.filter(func(a): return a == hot_entry[id])
 	if discovery and not moved.has(id):
 		return []
+	if usew and outside() and not works_outside(wtype(crew[id]["w"])):
+		out = out.filter(func(a): return not is_out(a))
 	return out
 
 
@@ -506,10 +614,10 @@ func _has_targets(a: String, id: int, usew: bool) -> bool:
 			return true
 	if usew and D.WEAPONS[wtype(crew[id]["w"])]["kind"] == "blast":
 		for x in section(a):
-			if not mons_at(x).is_empty():
+			if not seen_mons_at(x).is_empty():
 				return true
 		return false
-	return not mons_at(a).is_empty()
+	return not seen_mons_at(a).is_empty()
 
 
 ## Membri che possono colpire l'area a, con le possibili modalità: [[id, usew]].
@@ -525,7 +633,7 @@ func attackers_for(a: String) -> Array:
 # ---- mostri
 
 func mon_mobile(id: int) -> bool:
-	return mon.has(id) and int(D.MON[mon[id]["l"]]["mov"]) > 0 and not mon[id]["st"] and not moved.has(id)
+	return mon.has(id) and mmov(id) > 0 and not mon[id]["st"] and not moved.has(id)
 
 
 func mon_moves(ids: Array) -> Dictionary:
@@ -533,11 +641,32 @@ func mon_moves(ids: Array) -> Dictionary:
 		return {}
 	var mv := 9
 	var loc: String = mon[ids[0]]["loc"]
+	var runner := -1
+	for id in ids:
+		if is_mega(id, "runner") and mon_mobile(id) and mon[id]["loc"] == loc:
+			runner = id
+	if runner >= 0 and ids.size() > 1:
+		# il Corridore porta con sé uova (mezzo punto) e piccoli (un punto), al massimo 2 punti
+		var cost := 0.0
+		for id in ids:
+			if id == runner:
+				continue
+			if not mon.has(id) or mon[id]["loc"] != loc or moved.has(id) or mon[id]["st"] or not (mon[id]["l"] in ["E", "B"]):
+				return {}
+			cost += 0.5 if mon[id]["l"] == "E" else 1.0
+		if cost > 2.0:
+			return {}
+		return reach(loc, mmov(runner) - int(ceil(cost)), false, "walk", runner)
 	for id in ids:
 		if not mon_mobile(id) or mon[id]["loc"] != loc:
 			return {}
-		mv = mini(mv, int(D.MON[mon[id]["l"]]["mov"]))
-	return reach(loc, mv, false)
+		mv = mini(mv, mmov(id))
+	var out := reach(loc, mv, false, "walk", ids[0])
+	if ids.size() == 1 and is_mega(ids[0], "slimer"):
+		for w in walls_of(loc):
+			if not out.has(w):
+				out[w] = [w]
+	return out
 
 
 func mon_attack_areas() -> Array:
@@ -685,8 +814,12 @@ func _placement_areas() -> Array:
 		occ[mon[id]["loc"]] = true
 	var out := []
 	for a in occ:
-		for n in adj(a):
-			if not occ.has(n) and crew_at(n).is_empty() and not out.has(n):
+		var nb: Array = adj(a).duplicate()
+		var lo := lock_other(a)
+		if lo != "":
+			nb.append(lo)
+		for n in nb:
+			if not occ.has(n) and crew_at(n).is_empty() and not out.has(n) and not is_space(n):
 				out.append(n)
 	if out.is_empty():
 		for a in D.area_list():
@@ -730,6 +863,8 @@ func _monster_turn() -> void:
 	moved = {}
 	attacked = {}
 	log_msg("— Turno %d: le Cose Verdi —" % turn_no)
+	if outside():
+		await _remote_lock()
 	# 1. crescita
 	phase = "grow"
 	var opts_g := grow_options()
@@ -761,6 +896,19 @@ func _monster_turn() -> void:
 		return
 	# 3. attacco
 	phase = "mattack"
+	if megadults():
+		_mega_sync()
+		for id in mon.keys():
+			if not mon.has(id) or mon[id]["st"]:
+				continue
+			if is_mega(id, "brainiac"):
+				_brainiac_grab(id)
+				_brainiac_attack(id)
+			elif is_mega(id, "flamer"):
+				_flamer_attack(id)
+		_check_end()
+		if game_over:
+			return
 	guard = 0
 	while not abort and not game_over and guard < 100:
 		guard += 1
@@ -771,6 +919,9 @@ func _monster_turn() -> void:
 		if not (r is Dictionary) or r.is_empty():
 			break
 		_apply_mattack(r)
+		_check_end()
+	if not game_over and (megadults() or opts.get("kitchen", false) or opts.get("eat_weapons", false)):
+		await _revenge_after_attack()
 		_check_end()
 	# 4. risveglio
 	for id in mon:
@@ -796,6 +947,7 @@ func grow_options() -> Array:
 
 
 func _apply_grow(l: String) -> void:
+	var tried := false
 	var ids := []
 	for id in mon:
 		if mon[id]["l"] == l and not mon[id]["st"]:
@@ -813,9 +965,25 @@ func _apply_grow(l: String) -> void:
 					mon[id]["l"] = "A"
 					n += 1
 			"A":
+				if megadults() and is_mega(id):
+					continue
+				if megadults() and not tried:
+					tried = true
+					_try_mega(id)
+					continue
 				if avail("E") > 0:
 					_add_mon("E", mon[id]["loc"])
 					n += 1
+	if megadults():
+		var fresh := []
+		for id in ids:
+			if l == "A" and is_mega(id, "breeder"):
+				_breeder_grow(id, fresh)
+		if l != "A":
+			for id in mon.keys():
+				if is_mega(id, "breeder") and not mon[id]["st"] and avail("E") > 0:
+					_add_mon("E", mon[id]["loc"])
+					log_msg("   La Covatrice depone comunque un Uovo.")
 	var what := {"F": "%d Frammenti diventano Piccoli", "E": "%d Uova si schiudono in Piccoli",
 		"B": "%d Piccoli diventano Adulti", "A": "Gli Adulti depongono %d Uova"}
 	log_msg("Crescita: " + what[l] % n + ".")
@@ -834,6 +1002,8 @@ func _apply_mmove(r: Dictionary) -> void:
 			moved[id] = true
 		return
 	var from: String = mon[ids[0]]["loc"]
+	if ids.size() == 1 and is_mega(ids[0], "slimer") and to in walls_of(from):
+		_make_hole(from, to)
 	for id in ids:
 		mon[id]["loc"] = to
 		moved[id] = true
@@ -857,7 +1027,7 @@ func _fences() -> void:
 		if known.has("fence"):
 			ch = known["fence"]
 		else:
-			ch = _draw()
+			ch = _draw_learn()
 			learn = true
 		log_msg("Il Recinto elettrico in %s scarica sulle Cose Verdi." % area_name(a))
 		var eff := {}
@@ -904,8 +1074,8 @@ func _apply_mattack(r: Dictionary) -> void:
 			nd += matt(mid)
 			attacked[mid] = true
 		var tot := _roll_show(nd, "Cose Verdi contro %s" % cname(cid))
-		var con: int = cdef(cid)["con"]
-		if tot >= con:
+		var con: int = c_con(cid) + c_shell(cid)
+		if hit_crew(cid, tot):
 			log_msg("%s %s: %d contro %d. Divorato!" % [_attackers(ms), cname(cid), tot, con])
 			_crew_dies(cid)
 			_fx("kill_crew", {"c": cid, "area": a})
@@ -953,12 +1123,16 @@ func _eat(ms: Array) -> void:
 	var pref := [["A", "E"], ["B", "A"], ["F", "B"]] if solo() else [["B", "A"], ["A", "E"], ["F", "B"]]
 	for p in pref:
 		for mid in ms:
-			if mon[mid]["l"] == p[0] and avail(p[1]) > 0:
+			if mon[mid]["l"] == p[0] and avail(p[1]) > 0 and (not is_mega(mid) or is_mega(mid, "breeder")):
 				best = mid
 				break
 		if best >= 0:
 			break
 	if best < 0:
+		return
+	if megadults() and mon[best]["l"] == "A" and not is_mega(best):
+		log_msg("L'Adulto che ha mangiato tenta la metamorfosi.")
+		_try_mega(best)
 		return
 	match mon[best]["l"]:
 		"B":
@@ -988,6 +1162,9 @@ func _crew_turn() -> void:
 	hot_entry = {}
 	attacked = {}
 	busy = {}
+	gear_done = {}
+	if outside():
+		_boats_back()
 	if mutiny():
 		log_msg("— Turno %d: %s —" % [turn_no, "la squadra del Capitano" if cur_team == 0 else "la squadra del Primo Ufficiale"])
 	else:
@@ -1079,6 +1256,10 @@ func grab_actions() -> Array:
 					continue
 				if D.WEAPONS[t]["kind"] == "device" and k == "robot":
 					continue
+				if gear_of(cid) == "mover" and t != "fuel":
+					continue
+				if gear_done.has(cid) and gear_of(cid) != "":
+					continue
 				seen[t] = true
 				var lab := "%s prende %s" % [cdef(cid)["short"], wname(t)]
 				if w >= 0:
@@ -1086,6 +1267,8 @@ func grab_actions() -> Array:
 				if wpn[fw]["on"]:
 					lab = "%s smonta il Recinto acceso" % cdef(cid)["short"]
 				out.append({"a": "take", "c": cid, "w": fw, "label": lab})
+		if outside():
+			out.append_array(gear_actions(cid))
 		if w >= 0:
 			out.append({"a": "drop", "c": cid, "label": "%s lascia %s" % [cdef(cid)["short"], wname(wtype(w))]})
 			for o in crew_at(a):
@@ -1110,6 +1293,9 @@ func grab_actions() -> Array:
 
 func _apply_grab(act: Dictionary) -> void:
 	match act["a"]:
+		"suit", "unsuit":
+			_apply_gear(act)
+			return
 		"take":
 			var cid: int = act["c"]
 			var fw: int = act["w"]
@@ -1191,6 +1377,8 @@ func special_actions(cid: int) -> Array:
 		out.append({"act": "fence", "c": cid, "label": "Monta il Recinto qui"})
 	if solo():
 		return out
+	if webs.has(a) and w >= 0 and wtype(w) == "torch" and not hot_for_crew(a):
+		out.append({"act": "unweb", "c": cid, "label": "Brucia la ragnatela con la Saldatrice"})
 	var can_sd: bool = crew[cid]["k"] in D.SD_CREW and a in D.BRIDGES
 	if mutiny():
 		can_sd = D.MUT_SD.has(a) and crew[cid]["k"] in D.MUT_SD[a]
@@ -1201,6 +1389,21 @@ func special_actions(cid: int) -> Array:
 					out.append({"act": "heal", "c": cid, "t": o, "label": "Siringa: risveglia %s" % cdef(o)["short"]})
 	if can_sd and sd_left < 0 and not "sd" in busy.values():
 		out.append({"act": "sd", "c": cid, "label": "Avvia l'autodistruzione"})
+	if outside():
+		var bt: String = crew[cid].get("boat", "")
+		if bt != "":
+			for n in adj(a):
+				if is_space(n):
+					out.append({"act": "bmove", "b": bt, "c": cid, "to": n, "label": "%s vola: %s" % [String(D.BOATS[bt]["name"]).capitalize(), area_name(n)]})
+			if AR["s_" + bt]["space"] == a:
+				out.append({"act": "dock", "b": bt, "c": cid, "label": "%s rientra nel suo hangar" % String(D.BOATS[bt]["name"]).capitalize()})
+			if bt in ["scout", "cockboat"]:
+				out.append({"act": "blast", "b": bt, "c": cid, "label": "Getto del razzo sullo scafo (%s)" % area_name(a)})
+			out.append({"act": "leave", "b": bt, "c": cid, "label": "Rotta per Snudl-1 con %s" % D.BOATS[bt]["name"]})
+			return out
+		if D.BOATS.has(a) and not launched.has(a) and not bout.has(a) and gear_of(cid) == "":
+			out.append({"act": "launch", "b": a, "c": cid, "label": "Decolla con %s" % D.BOATS[a]["name"]})
+		return out
 	if D.BOATS.has(a) and not launched.has(a):
 		out.append({"act": "escape", "b": a, "c": cid, "label": "Fuggi con %s" % D.BOATS[a]["name"]})
 	return out
@@ -1211,8 +1414,19 @@ func _apply_cmove(r: Dictionary) -> void:
 	if act == "escape":
 		_escape(str(r.get("b", "")), r.get("ids", []))
 		return
+	if act in ["launch", "bmove", "dock", "blast", "leave"]:
+		_boat_act(act, r)
+		return
 	var cid := int(r.get("c", -1))
 	if not crew.has(cid):
+		return
+	if act == "unweb":
+		for s in special_actions(cid):
+			if s["act"] == "unweb":
+				webs.erase(crew[cid]["loc"])
+				moved[cid] = true
+				log_msg("%s brucia la ragnatela in %s." % [cname(cid), area_name(crew[cid]["loc"])])
+				changed.emit()
 		return
 	if act == "heal":
 		var t := int(r.get("t", -1))
@@ -1355,6 +1569,14 @@ func _apply_effects(eff: Dictionary) -> Dictionary:
 	var ids := eff.keys()
 	ids.sort()
 	var parts := []
+	# 0. morte istantanea (reazione allergica allo Zgwortz)
+	for id in ids:
+		if mon.has(id) and eff[id].get("dies", false):
+			var nm0 := mname(id)
+			_fx("kill_mon", {"area": mon[id]["loc"], "l": mon[id]["l"]})
+			mon.erase(id)
+			killed += 1
+			parts.append("%s muore" % nm0)
 	# 1. Cresce
 	for id in ids:
 		if mon.has(id) and eff[id]["grow"]:
@@ -1363,6 +1585,9 @@ func _apply_effects(eff: Dictionary) -> Dictionary:
 				mon[id]["l"] = "B"
 			elif l == "B" and avail("A") > 0:
 				mon[id]["l"] = "A"
+			elif l == "A" and megadults():
+				if not is_mega(id):
+					_try_mega(id)
 			elif l == "A" and opts.get("grow_eggs", false) and avail("E") > 0:
 				_add_mon("E", mon[id]["loc"])
 			parts.append("%s cresce" % D.MON[l]["name"])
@@ -1465,12 +1690,14 @@ func _apply_cattack(r: Dictionary) -> void:
 			kind = D.WEAPONS[wtype(crew[cid]["w"])]["kind"]
 			if kind == "fence":
 				continue
+			if outside() and is_out(x) and not works_outside(wtype(crew[cid]["w"])):
+				continue
 		if kind in ["hand", "single"]:
 			if tgt >= D.CREW_T:
 				var tc := tgt - D.CREW_T
 				if not mutiny() or not crew.has(tc) or not (tc in enemies_at(x, cid)):
 					continue
-			elif not mon.has(tgt) or mon[tgt]["loc"] != x:
+			elif not mon.has(tgt) or mon[tgt]["loc"] != x or not mon_visible(tgt):
 				continue
 		elif kind == "device":
 			continue
@@ -1491,6 +1718,8 @@ func _apply_cattack(r: Dictionary) -> void:
 	# gettoni per le armi non ancora provate
 	var untried := []
 	for e in entries:
+		if e["usew"] and e["t"] == "zgwortz" and opts.get("kitchen", false):
+			continue
 		if e["usew"] and not known.has(e["t"]) and not untried.has(e["t"]):
 			untried.append(e["t"])
 	var chit_for := {}
@@ -1498,7 +1727,7 @@ func _apply_cattack(r: Dictionary) -> void:
 	var learn_t := ""
 	if untried.size() == 1:
 		learn_t = untried[0]
-		chit_for[learn_t] = _draw()
+		chit_for[learn_t] = _draw_learn()
 	elif untried.size() > 1:
 		shared = _draw()
 		for t in untried:
@@ -1517,23 +1746,36 @@ func _apply_cattack(r: Dictionary) -> void:
 	for t in known:
 		if not chit_for.has(t):
 			chit_for[t] = effect_of(t)
+	var zg_rolls := {}
+	if opts.get("kitchen", false):
+		for e in entries:
+			if e["usew"] and e["t"] == "zgwortz":
+				zg_rolls[e["c"]] = zgwortz_roll()
+				log_msg("   Lo Zgwortz di %s: %s." % [cdef(e["c"])["short"], _zg_name(zg_rolls[e["c"]])])
 	# effetti sui mostri
 	var eff := {}
 	var gas_done := {}
 	var gas_areas := {}
 	var fuel_areas := {}
 	var desc := []
+	var thrown := []
 	for e in entries:
 		var cid: int = e["c"]
 		if not e["usew"]:
 			var tg: int = e["tgt"]
+			if gear_of(cid) == "mover" and is_space(crew[cid]["loc"]):
+				desc.append("%s afferra %s con le pinze e lo scaglia nello spazio" % [cdef(cid)["short"], mname(tg)])
+				thrown.append(tg)
+				continue
 			eff[tg] = _eff_add(eff.get(tg, {}), "", "hand")
-			eff[tg]["kill"] += int(cdef(cid)["att"])
+			eff[tg]["kill"] += c_att(cid)
 			eff[tg]["ksrc"].append("hand")
 			desc.append("%s a mani nude su %s" % [cdef(cid)["short"], mname(tg)])
 			continue
 		var t: String = e["t"]
 		var ch: String = chit_for.get(t, "none")
+		if zg_rolls.has(cid):
+			ch = zg_rolls[cid]
 		var targets := []
 		match e["kind"]:
 			"single":
@@ -1555,9 +1797,18 @@ func _apply_cattack(r: Dictionary) -> void:
 				if gas_done.has(tg):
 					continue
 				gas_done[tg] = true
+			if ch == "dies":
+				eff[tg] = _eff_add(eff.get(tg, {}), "", t)
+				eff[tg]["dies"] = true
+				continue
 			eff[tg] = _eff_add(eff.get(tg, {}), ch, t)
 	log_msg("Attacco in %s: %s." % [area_name(x), "; ".join(desc)])
 	_fx("attack", {"area": x, "crew": entries.map(func(e): return e["c"])})
+	for tg in thrown:
+		if mon.has(tg):
+			_fx("kill_mon", {"area": mon[tg]["loc"], "l": mon[tg]["l"]})
+			mon.erase(tg)
+			eff.erase(tg)
 	var rep := _apply_effects(eff)
 	# cosa si è imparato
 	var unlearned := false
@@ -1604,25 +1855,885 @@ func _apply_cattack(r: Dictionary) -> void:
 			wpn[w]["c"] = -1
 			wpn[w]["loc"] = x
 			crew[cid]["w"] = -1
+	for s0 in fuel_areas:
+		webs.erase(s0)
+	if not fuel_areas.is_empty():
+		_pod_check(fuel_areas.keys())
 	# effetti di gas e carburante sull'equipaggio
 	for s in gas_areas:
 		for cid in crew_at(s):
-			if crew[cid]["k"] == "robot":
+			if gas_proof(cid):
 				continue
 			var tot := _roll_show(5, "Gas contro %s" % cname(cid))
-			if tot >= int(cdef(cid)["con"]):
+			if tot >= c_con(cid):
 				crew[cid]["st"] = turn_no
 				log_msg("   Il gas stordisce anche %s (%d)." % [cname(cid), tot])
 	for s in fuel_areas:
 		for cid in crew_at(s):
+			if crew[cid].get("boat", "") != "":
+				continue   # al riparo dentro la scialuppa
 			var tot := _roll_show(fuel_areas[s], "Esplosione contro %s" % cname(cid))
-			if tot >= int(cdef(cid)["con"]):
+			if hit_crew(cid, tot):
 				log_msg("   L'esplosione uccide %s (%d)!" % [cname(cid), tot])
 				_crew_dies(cid)
 				_fx("kill_crew", {"c": cid, "area": s})
 			else:
 				log_msg("   %s sopravvive all'esplosione (%d)." % [cname(cid), tot])
 	changed.emit()
+
+
+# ================================================================ Revenge of the Awful Green Things
+## Regole facoltative di Tom Rhoads e James Sterrett: i Megadulti, la Cucina e la Mensa, le varianti delle
+## armi (Frammenti ritirati, armi mangiate, Serbatoi che esplodono) e i mostri nascosti.
+
+var webs := {}            # aree con una ragnatela del Tessitore
+var extra_adj := {}       # buchi nelle pareti fatti dal Melmoso: area -> [aree]
+var pods_gone := {}       # Serbatoi esplosi
+var _walls := []
+
+
+func hidden_mode() -> bool:
+	return opts.get("hidden_mons", false)
+
+
+## Mostri nascosti: l'equipaggio vede le Cose Verdi nelle aree in linea di vista di qualcuno sveglio;
+## le Uova solo nella propria area o lungo i corridoi aperti.
+func mon_visible(m: int) -> bool:
+	if not hidden_mode() or not mon.has(m):
+		return true
+	var a: String = mon[m]["loc"]
+	var key := ""
+	for c in crew:
+		if crew[c]["state"] == "ok":
+			key += "%s%d," % [crew[c]["loc"], crew[c]["st"]]
+	if key != _vis_key:
+		_vis_key = key
+		_vis_cache = {}
+	if not _vis_cache.has(a):
+		var v := false
+		var ve := false
+		for c in board_crew():
+			if not awake(c):
+				continue
+			var ca: String = crew[c]["loc"]
+			if ca == a or a in section(ca):
+				v = true
+				ve = true
+				break
+			if a in los(ca):
+				v = true
+		_vis_cache[a] = [v, ve]
+	return _vis_cache[a][1] if mon[m]["l"] == "E" else _vis_cache[a][0]
+
+
+var _vis_cache := {}
+var _vis_key := ""
+
+
+func seen_mons_at(a: String) -> Array:
+	return mons_at(a).filter(func(m): return mon_visible(m))
+
+
+func megadults() -> bool:
+	return opts.get("megadults", false)
+
+
+func is_mega(id: int, k := "") -> bool:
+	if not mon.has(id):
+		return false
+	var mg: String = mon[id].get("mega", "")
+	return mg != "" and (k == "" or mg == k)
+
+
+## Pareti fra due aree senza portello (dove il Melmoso può aprire un buco).
+func walls_of(a: String) -> Array:
+	if _walls.is_empty():
+		var f := FileAccess.open("res://assets/data/muri.json", FileAccess.READ)
+		_walls = JSON.parse_string(f.get_as_text())
+	var out := []
+	for p in _walls:
+		if p[0] == a and not adj(a).has(p[1]):
+			out.append(p[1])
+		elif p[1] == a and not adj(a).has(p[0]):
+			out.append(p[0])
+	return out
+
+
+## Dove disegnare il buco fra due aree: a metà fra i loro due vertici più vicini.
+func hole_point(a: String, b: String) -> Vector2:
+	var best := Vector2.ZERO
+	var bd := 1e18
+	for p in AR[a]["poly"]:
+		for q in AR[b]["poly"]:
+			var d := Vector2(p[0], p[1]).distance_squared_to(Vector2(q[0], q[1]))
+			if d < bd:
+				bd = d
+				best = (Vector2(p[0], p[1]) + Vector2(q[0], q[1])) * 0.5
+	return best
+
+
+func _make_hole(a: String, b: String) -> void:
+	for p in [[a, b], [b, a]]:
+		if not extra_adj.has(p[0]):
+			extra_adj[p[0]] = []
+		if not (extra_adj[p[0]] as Array).has(p[1]):
+			extra_adj[p[0]].append(p[1])
+	_dist_cache = {}
+	log_msg("Il Melmoso scioglie la parete fra %s e %s: ora c'è un buco." % [area_name(a), area_name(b)])
+	_fx("frag", {"area": b, "n": 0})
+
+
+## Megadulti già in gioco: i loro gettoni non sono nella tazza.
+func _mega_cup() -> Array:
+	var alive := {}
+	for id in mon:
+		if mon[id].get("mega", "") != "":
+			alive[mon[id]["mega"]] = true
+	return D.MEGA_CHITS.filter(func(k): return not alive.has(k))
+
+
+## La crescita è certa quando l'equipaggio ha scoperto un'arma ad area che uccide o rimpicciolisce.
+func _mega_sure() -> bool:
+	for t in known:
+		if D.WEAPONS[t]["kind"] in ["area", "blast"] and (str(known[t]).begins_with("kill") or known[t] == "shrink"):
+			return true
+	return false
+
+
+## Tentativo di metamorfosi di un Adulto (al posto di deporre l'Uovo). Restituisce true se c'è stato.
+func _try_mega(id: int) -> bool:
+	if not megadults() or not mon.has(id) or mon[id]["l"] != "A" or is_mega(id):
+		return false
+	var a: String = mon[id]["loc"]
+	var r := d6()
+	if not _mega_sure() and r > turn_no:
+		log_msg("   L'Adulto in %s tenta la metamorfosi… ma non ce la fa (%d)." % [area_name(a), r])
+		return true
+	var cup2 := _mega_cup()
+	var ch: String = cup2[rng.randi_range(0, cup2.size() - 1)]
+	match ch:
+		"fail":
+			log_msg("   Metamorfosi in %s: fallimento metabolico! L'Adulto si scioglie." % area_name(a))
+			_fx("kill_mon", {"area": a, "l": "A"})
+			mon.erase(id)
+		"eggs2":
+			var n := 0
+			for i in 2:
+				if avail("E") > 0:
+					_add_mon("E", a)
+					n += 1
+			log_msg("   Metamorfosi in %s: qualcosa va storto e l'Adulto depone %d uova." % [area_name(a), n])
+		_:
+			mon[id]["mega"] = ch
+			log_msg("   METAMORFOSI in %s: nasce %s (%s)!" % [area_name(a), D.MEGA[ch]["name"], D.MEGA[ch]["tip"]])
+			_fx("mega", {"area": a, "k": ch})
+	return true
+
+
+## La Covatrice quando crescono gli Adulti: fa crescere i Piccoli, schiudere le Uova o depone 1-6 uova.
+func _breeder_grow(id: int, fresh: Array) -> void:
+	var a: String = mon[id]["loc"]
+	var babies := mons_at(a).filter(func(m): return mon[m]["l"] == "B")
+	var eggs := mons_at(a).filter(func(m): return mon[m]["l"] == "E" and not fresh.has(m))
+	if babies.size() >= 2 and avail("A") > 0:
+		var n := 0
+		for m in babies:
+			if avail("A") > 0:
+				mon[m]["l"] = "A"
+				n += 1
+		log_msg("   La Covatrice fa crescere %d Piccoli in Adulti." % n)
+	elif not eggs.is_empty() and avail("B") > 0:
+		var n2 := 0
+		for m in eggs:
+			if avail("B") > 0:
+				mon[m]["l"] = "B"
+				n2 += 1
+		log_msg("   La Covatrice fa schiudere %d Uova." % n2)
+	else:
+		var r := d6()
+		var n3 := 0
+		for i in r:
+			if avail("E") > 0:
+				fresh.append(_add_mon("E", a))
+				n3 += 1
+		log_msg("   La Covatrice depone %d uova (%d)." % [n3, r])
+
+
+## Il Lanciafiamme: 12 dadi sull'equipaggio della sua area, o 6 su un'area accanto se nella sua non c'è
+## nessuno sveglio. I dadi si dividono fra i bersagli; un Estintore ne toglie 3. Chi brucia non si mangia.
+func _flamer_attack(id: int) -> void:
+	var a: String = mon[id]["loc"]
+	var target_a := ""
+	var dice := 0
+	if not crew_at(a).filter(func(c): return awake(c)).is_empty():
+		target_a = a
+		dice = 12
+	else:
+		var best := 0
+		for n in adj(a):
+			if is_space(n):
+				continue
+			var k := crew_at(n).size()
+			if k > best:
+				best = k
+				target_a = n
+		dice = 6
+	if target_a == "" or (outside() and (is_out(target_a) or is_out(a))):
+		return
+	var ts := crew_at(target_a)
+	if ts.is_empty():
+		return
+	attacked[id] = true
+	ts.sort_custom(func(x, y): return c_con(x) + c_shell(x) < c_con(y) + c_shell(y))
+	var alloc := {}
+	var left := dice
+	for c in ts:
+		if left <= 0:
+			break
+		var need := mini(left, int(ceil(float(c_con(c) + c_shell(c)) / 3.5)) + 1)
+		alloc[c] = need
+		left -= need
+	if left > 0:
+		alloc[ts[0]] = alloc.get(ts[0], 0) + left
+	# un Estintore in mano a chi non è bersaglio toglie 3 dadi
+	for c in crew_at(target_a):
+		if crew[c]["w"] >= 0 and wtype(crew[c]["w"]) == "extinguisher" and awake(c):
+			var big := -1
+			for t in alloc:
+				if big < 0 or alloc[t] > alloc[big]:
+					big = t
+			if big >= 0:
+				alloc[big] = maxi(0, alloc[big] - 3)
+				log_msg("   %s spegne in parte le fiamme con l'Estintore." % cname(c))
+			break
+	log_msg("Il Lanciafiamme in %s sputa fuoco su %s (%d dadi)!" % [area_name(a), area_name(target_a), dice])
+	_fx("attack", {"area": target_a})
+	webs.erase(target_a)
+	for c in alloc:
+		if alloc[c] <= 0 or not on_board(c):
+			continue
+		var tot := _roll_show(alloc[c], "Fiamme contro %s" % cname(c))
+		if hit_crew(c, tot):
+			log_msg("   %s brucia (%d)." % [cname(c), tot])
+			var w: int = crew[c]["w"]
+			var fuel := w >= 0 and wtype(w) == "fuel"
+			_crew_dies(c)
+			_fx("kill_crew", {"c": c, "area": target_a})
+			if fuel and d6() <= 3:
+				_fuel_blast(target_a, "La Tanica di carburante di %s esplode!" % cname(c))
+		else:
+			log_msg("   %s resiste alle fiamme (%d)." % [cname(c), tot])
+			var w2: int = crew[c]["w"]
+			if w2 >= 0 and wtype(w2) == "fuel" and d6() <= 3:
+				_fuel_blast(target_a, "La Tanica di carburante di %s esplode fra le fiamme!" % cname(c))
+
+
+## Esplosione di una tanica fuori dalle mani dell'equipaggio: colpisce tutti nell'area.
+func _fuel_blast(a: String, why: String) -> void:
+	log_msg("   " + why)
+	_fx("explode", {})
+	var ch: String = known.get("fuel", "")
+	if ch == "":
+		ch = _draw_learn()
+		_learn("fuel", ch)
+	var eff := {}
+	for m in mons_at(a):
+		eff[m] = _eff_add({}, ch, "fuel")
+	_apply_effects(eff)
+	for c in crew_at(a):
+		var tot := _roll_show(5, "Esplosione contro %s" % cname(c))
+		if hit_crew(c, tot):
+			log_msg("   L'esplosione uccide %s (%d)!" % [cname(c), tot])
+			_crew_dies(c)
+	webs.erase(a)
+
+
+## Il Cervellone: raccoglie un'arma che l'equipaggio ha già usato (1-3 su un dado) e la usa.
+func _brainiac_grab(id: int) -> void:
+	if not is_mega(id, "brainiac") or mon[id].has("w"):
+		return
+	for w in weapons_at(mon[id]["loc"]):
+		var t := wtype(w)
+		if known.has(t) and D.WEAPONS[t]["kind"] != "device" and t != "fence":
+			var r := d6()
+			if r <= 3:
+				wpn[w]["c"] = -2
+				wpn[w]["loc"] = ""
+				wpn[w]["mon"] = id
+				mon[id]["w"] = w
+				log_msg("Il Cervellone capisce come funziona %s e lo raccoglie (%d)!" % [wname(t), r])
+			return
+
+
+func _brainiac_attack(id: int) -> void:
+	if not mon[id].has("w") or attacked.has(id) or mon[id]["st"]:
+		return
+	var w: int = mon[id]["w"]
+	var t := wtype(w)
+	var a: String = mon[id]["loc"]
+	var rng_a := [a]
+	match D.WEAPONS[t]["range"]:
+		"adj":
+			rng_a.append_array(adj(a))
+		"los":
+			rng_a = los(a)
+	var target := -1
+	var tc := 999
+	for x in rng_a:
+		for c in crew_at(x):
+			if c_con(c) < tc and crew[c]["k"] != "robot":
+				tc = c_con(c)
+				target = c
+	if target < 0:
+		return
+	attacked[id] = true
+	var x2: String = crew[target]["loc"]
+	log_msg("Il Cervellone usa %s contro %s!" % [wname(t), cname(target)])
+	_fx("attack", {"area": x2})
+	match t:
+		"beamer", "extinguisher":
+			log_msg("   …ma non succede niente.")
+		"pistol":
+			var tot := _roll_show(5, "Pistola del Cervellone")
+			if tot >= c_con(target):
+				crew[target]["st"] = turn_no
+				log_msg("   %s è stordito (%d)." % [cname(target), tot])
+		"grenade", "fuel":
+			for s2 in section(x2):
+				for c in crew_at(s2):
+					if t == "grenade" and gas_proof(c):
+						continue
+					var tot2 := _roll_show(5, "%s contro %s" % [wname(t), cname(c)])
+					if t == "grenade" and tot2 >= c_con(c):
+						crew[c]["st"] = turn_no
+						log_msg("   Il gas stordisce %s (%d)." % [cname(c), tot2])
+					elif t == "fuel" and hit_crew(c, tot2):
+						log_msg("   L'esplosione uccide %s (%d)!" % [cname(c), tot2])
+						_crew_dies(c)
+		_:
+			var tot3 := _roll_show(3, "%s del Cervellone" % wname(t))
+			if hit_crew(target, tot3):
+				log_msg("   %s cade (%d)!" % [cname(target), tot3])
+				_crew_dies(target)
+				_fx("kill_crew", {"c": target, "area": x2})
+	# le armi da lancio tornano al deposito
+	var back: Array = D.WEAPONS[t].get("back", [])
+	if not back.is_empty():
+		wpn[w]["c"] = -1
+		wpn[w]["loc"] = back[0]
+		wpn[w].erase("mon")
+		mon[id].erase("w")
+
+
+## Armi in mano ai mostri morti o cambiati: cadono a terra.
+func _mega_sync() -> void:
+	for w in wpn:
+		if int(wpn[w]["c"]) == -2:
+			var m: int = wpn[w].get("mon", -1)
+			if not is_mega(m, "brainiac"):
+				wpn[w]["c"] = -1
+				wpn[w]["loc"] = str(wpn[w].get("mloc", "cargo"))
+				wpn[w].erase("mon")
+				if mon.has(m):
+					mon[m].erase("w")
+			else:
+				wpn[w]["mloc"] = mon[m]["loc"]
+	for id in mon:
+		if mon[id].get("mega", "") != "" and mon[id]["l"] != "A":
+			mon[id].erase("mega")
+
+
+## Fine dell'attacco dei mostri: il Tessitore tesse, il Cervellone tenta l'autodistruzione, in Cucina e in
+## Mensa si assaggia di tutto, gli Adulti possono mangiare le armi.
+func _revenge_after_attack() -> void:
+	_mega_sync()
+	for id in mon.keys():
+		if not mon.has(id) or mon[id]["st"]:
+			continue
+		var a: String = mon[id]["loc"]
+		if is_mega(id, "webber") and crew_at(a).filter(func(c): return awake(c)).is_empty() and not webs.has(a):
+			webs[a] = true
+			log_msg("Il Tessitore stende una ragnatela in %s." % area_name(a))
+		if is_mega(id, "brainiac") and a in D.BRIDGES and sd_left < 0 and not solo():
+			var r := d6()
+			if r == 1:
+				sd_left = 3
+				log_msg("Il Cervellone smanetta sul %s… e avvia l'AUTODISTRUZIONE!" % area_name(a))
+				_fx("alarm", {})
+	if opts.get("kitchen", false):
+		await _kitchen()
+	if opts.get("eat_weapons", false) or megadults():
+		await _eat_weapons()
+	_mega_sync()
+
+
+## Cucina e Mensa: le Cose Verdi senza equipaggio intorno assaggiano cibo, detersivi e posate.
+func _kitchen() -> void:
+	for a in ["galley", "mess"]:
+		if not crew_at(a).is_empty():
+			continue
+		var eff := {}
+		var parts := []
+		for m in mons_at(a):
+			if mon[m]["st"] or mon[m]["l"] == "E":
+				continue
+			var r := d6()
+			var ch: String = ["grow", "shrink", "kill4", "stun5", "zg", "zg"][r - 1]
+			if ch == "zg":
+				ch = zgwortz_roll()
+			parts.append("%s: %s" % [mname(m), _zg_name(ch)])
+			if ch == "dies":
+				eff[m] = _eff_add(eff.get(m, {}), "", "food")
+				eff[m]["dies"] = true
+			else:
+				eff[m] = _eff_add(eff.get(m, {}), ch, "food")
+		if not eff.is_empty():
+			log_msg("In %s le Cose Verdi assaggiano di tutto — %s." % [area_name(a), ", ".join(parts)])
+			_apply_effects(eff)
+			last_area = a
+			changed.emit()
+
+
+## Lo Zgwortz con la regola della Cucina: ogni barattolo ha un effetto a caso.
+func zgwortz_roll() -> String:
+	return ["grow", "grow", "none", "kill4", "stun5", "dies"][d6() - 1]
+
+
+func _zg_name(ch: String) -> String:
+	if ch == "dies":
+		return "reazione allergica mortale"
+	if ch == "none":
+		return "niente"
+	return chit_name(ch)
+
+
+## Un Adulto da solo con un'arma già usata contro le Cose Verdi può mangiarla.
+func _eat_weapons() -> void:
+	var done := {}
+	for id in mon.keys():
+		if not mon.has(id) or mon[id]["l"] != "A" or mon[id]["st"] or done.has(id):
+			continue
+		if not (opts.get("eat_weapons", false) or is_mega(id, "slimer")):
+			continue
+		var a: String = mon[id]["loc"]
+		if not crew_at(a).is_empty():
+			continue
+		for w in weapons_at(a):
+			var t := wtype(w)
+			if not known.has(t) or D.WEAPONS[t]["kind"] == "device" or wpn[w]["on"]:
+				continue
+			var c := await pick(MON_SEAT, "eatw", "%s in %s può mangiare %s (effetto: %s). Lo mangia?" % [mname(id), area_name(a), wname(t), chit_name(effect_of(t))],
+				["Sì, lo mangia", "No"], {"w": w, "m": id})
+			if c != 0:
+				continue
+			done[id] = true
+			var back: Array = D.WEAPONS[t].get("back", [])
+			if t in ["zgwortz", "grenade", "fuel"] and not back.is_empty():
+				wpn[w]["loc"] = back[0]
+			else:
+				wpn[w]["out"] = true
+				wpn[w]["loc"] = ""
+			log_msg("%s in %s mangia %s!" % [mname(id), area_name(a), wname(t)])
+			if not is_mega(id, "slimer") or not opts.get("eat_weapons", false):
+				var ch := _draw()
+				log_msg("   Che indigestione: %s." % chit_name(ch))
+				_fx("chit", {"chit": ch, "t": ""})
+				_apply_effects({id: _eff_add({}, ch, "eat")})
+				cup.append(ch)
+			last_area = a
+			changed.emit()
+			break
+
+
+## Variante delle armi: il gettone «1 dado di Frammenti» resta solo con 1-2 su un dado, altrimenti se ne pesca un altro.
+func _draw_learn() -> String:
+	var ch := _draw()
+	if ch == "frag" and opts.get("frag_reroll", false):
+		var r := d6()
+		if r > 2:
+			cup.append(ch)
+			ch = _draw()
+			log_msg("   (Frammenti ritirati: %d)" % r)
+	return ch
+
+
+## Variante delle armi: una tanica che esplode in un Serbatoio fa saltare tutto il Serbatoio.
+func _pod_check(sect: Array) -> void:
+	if not opts.get("pod_explode", false):
+		return
+	for p in ["fuel1", "fuel2"]:
+		if not (p in sect) or pods_gone.has(p):
+			continue
+		var cans := weapons_at(p).filter(func(w): return wtype(w) == "fuel")
+		if cans.is_empty():
+			continue
+		pods_gone[p] = true
+		log_msg("KABOOM! Le taniche nel %s esplodono tutte insieme: il Serbatoio salta in aria!" % area_name(p))
+		_fx("explode", {})
+		for w in cans:
+			wpn[w]["out"] = true
+			wpn[w]["loc"] = ""
+		for m in mons_at(p):
+			mon.erase(m)
+		for c in crew_at(p):
+			_crew_dies(c)
+		for n in adj(p):
+			if is_out(n):
+				for m2 in mons_at(n):
+					mon.erase(m2)
+				for c2 in crew_at(n):
+					_crew_dies(c2)
+			else:
+				_fuel_blast(n, "L'onda d'urto investe %s." % area_name(n))
+
+
+# ================================================================ fuori dalla Znutar
+## Regole «Outside the Znutar» (Dragon / edizione Steve Jackson): lo scafo attorno alla nave, quattro zone
+## di spazio, le camere stagne, le tute a reazione, i carrelli elevatori, la tuta della Mascotte e le
+## scialuppe che volano attorno alla nave.
+
+var gear := {}            # id -> {t: jet/mover/soot, loc, c: chi la indossa (-1), out: distrutta}
+var locked := {}          # camere stagne chiuse dal Ponte: stanza -> true
+var bout := {}            # scialuppe nello spazio: b -> {loc, back: turno del rientro dopo il getto, gone}
+var gear_done := {}       # chi ha già indossato o lasciato qualcosa in questa fase delle armi
+
+
+func outside() -> bool:
+	return opts.get("outside", false)
+
+
+func is_out(a: String) -> bool:
+	return AR.has(a) and AR[a]["kind"] in ["scafo", "spazio"]
+
+
+func is_space(a: String) -> bool:
+	return AR.has(a) and AR[a]["kind"] == "spazio"
+
+
+## L'altra parte di una camera stagna: dalla stanza al suo tratto di scafo e viceversa.
+func lock_other(a: String) -> String:
+	if not outside() or not AR.has(a):
+		return ""
+	if AR[a]["kind"] == "scafo":
+		return str(AR[a].get("airlock", ""))
+	if a in D.outside_data()["airlocks"]:
+		return "s_" + a
+	return ""
+
+
+## Si può passare la camera stagna? I mostri non entrano se dentro c'è equipaggio sveglio (comando manuale)
+## o se il Ponte l'ha chiusa; la Mascotte esce solo con la sua tuta.
+func _lock_open(from: String, to: String, for_crew: bool, unit: int) -> bool:
+	var room: String = to if not is_out(to) else from
+	if locked.has(room):
+		return false
+	if for_crew:
+		if unit >= 0 and crew[unit]["k"] == "mascot" and gear_of(unit) != "soot" and is_out(to):
+			return false
+		return true
+	if is_out(from):
+		for c in crew_at(to):
+			if awake(c):
+				return false
+	return true
+
+
+func gear_of(c: int) -> String:
+	var g: int = crew[c].get("g", -1)
+	return gear[g]["t"] if g >= 0 and gear.has(g) else ""
+
+
+func _mode(c: int) -> String:
+	var g := gear_of(c)
+	return "jet" if g == "jet" else ("mover" if g == "mover" else "walk")
+
+
+func c_att(c: int) -> int:
+	var g := gear_of(c)
+	if g in ["jet", "mover"]:
+		return int(D.GEAR[g]["att"])
+	return int(cdef(c)["att"])
+
+
+func c_mov(c: int) -> int:
+	var g := gear_of(c)
+	if g != "":
+		return int(D.GEAR[g]["mov"])
+	return int(cdef(c)["mov"])
+
+
+func c_con(c: int) -> int:
+	return int(cdef(c)["con"]) * (2 if gear_of(c) == "soot" else 1)
+
+
+## Costituzione della corazza (tuta a reazione 20, carrello 40): i colpi oltre passano a chi c'è dentro.
+func c_shell(c: int) -> int:
+	var g := gear_of(c)
+	return int(D.GEAR[g]["con"]) if g in ["jet", "mover"] else 0
+
+
+## Il gas non tocca il Robot, chi è in tuta a reazione e la Mascotte nella sua tuta.
+func gas_proof(c: int) -> bool:
+	return crew[c]["k"] == "robot" or gear_of(c) in ["jet", "soot"]
+
+
+## Applica un colpo «da uccidere» a un membro: prima cede la corazza. Restituisce true se muore.
+func hit_crew(c: int, tot: int) -> bool:
+	var sh := c_shell(c)
+	if sh > 0:
+		if tot < sh:
+			return false
+		var g: int = crew[c]["g"]
+		log_msg("   %s di %s va in pezzi!" % [D.GEAR[gear[g]["t"]]["name"], cname(c)])
+		gear[g]["out"] = true
+		gear[g]["c"] = -1
+		crew[c]["g"] = -1
+		if is_space(crew[c]["loc"]):
+			log_msg("   %s resta nel vuoto e si perde fra le stelle." % cname(c))
+			return true
+		return tot - sh >= c_con(c)
+	return tot >= c_con(c)
+
+
+func gear_at(a: String) -> Array:
+	var out := []
+	for g in gear:
+		if not gear[g]["out"] and gear[g]["c"] == -1 and gear[g]["loc"] == a:
+			out.append(g)
+	return out
+
+
+## Azioni con l'equipaggiamento nella fase delle armi.
+func gear_actions(cid: int) -> Array:
+	var out := []
+	if not outside() or crew[cid].get("boat", "") != "" or gear_done.has(cid):
+		return out
+	var a: String = crew[cid]["loc"]
+	var k: String = crew[cid]["k"]
+	var mine := gear_of(cid)
+	if mine != "":
+		var ok := true
+		if mine == "jet" and is_space(a):
+			ok = false
+		if mine == "mover" and not (a in D.MOVER_ROOMS):
+			ok = false
+		if ok:
+			out.append({"a": "unsuit", "c": cid, "label": "%s lascia %s" % [cdef(cid)["short"], D.GEAR[mine]["name"]]})
+		return out
+	var seen := {}
+	for g in gear_at(a):
+		var t: String = gear[g]["t"]
+		if seen.has(t):
+			continue
+		if t == "soot" and k != "mascot":
+			continue
+		if t != "soot" and k == "mascot":
+			continue
+		seen[t] = true
+		out.append({"a": "suit", "c": cid, "g": g, "label": "%s indossa %s" % [cdef(cid)["short"], D.GEAR[t]["name"]]})
+	return out
+
+
+func _apply_gear(act: Dictionary) -> void:
+	var cid: int = act["c"]
+	gear_done[cid] = true
+	if act["a"] == "suit":
+		var g: int = act["g"]
+		gear[g]["c"] = cid
+		crew[cid]["g"] = g
+		var w: int = crew[cid]["w"]
+		if w >= 0 and gear[g]["t"] in ["jet", "mover"]:
+			# entrando nella tuta si posa l'arma (il carrello non tiene che il carburante)
+			if gear[g]["t"] == "jet" or wtype(w) != "fuel":
+				wpn[w]["c"] = -1
+				wpn[w]["loc"] = crew[cid]["loc"]
+				crew[cid]["w"] = -1
+		log_msg("%s indossa: %s." % [cname(cid), D.GEAR[gear[g]["t"]]["name"]])
+	else:
+		var g2: int = crew[cid]["g"]
+		gear[g2]["c"] = -1
+		gear[g2]["loc"] = crew[cid]["loc"]
+		crew[cid]["g"] = -1
+		log_msg("%s lascia: %s." % [cname(cid), D.GEAR[gear[g2]["t"]]["name"]])
+	changed.emit()
+
+
+## Le scialuppe nello spazio: dove sono e chi c'è a bordo.
+func boat_crew(b: String) -> Array:
+	var out := []
+	for c in board_crew():
+		if crew[c].get("boat", "") == b:
+			out.append(c)
+	return out
+
+
+## Il gas e l'estintore non funzionano fuori dalla nave.
+func works_outside(t: String) -> bool:
+	return not (t in ["extinguisher", "grenade"])
+
+
+## Zona di spazio di un'area esterna.
+func space_of(a: String) -> String:
+	return str(AR[a].get("space", "")) if is_out(a) else ""
+
+
+## Chiusura a distanza delle camere stagne: il Capitano o il Primo Ufficiale su un Ponte, all'inizio del
+## turno delle Cose Verdi, può chiuderne una (resta chiusa fino al turno successivo dei mostri).
+func _remote_lock() -> void:
+	locked = {}
+	if not outside():
+		return
+	var who := -1
+	for c in board_crew():
+		if crew[c]["k"] in ["captain", "first_officer"] and crew[c]["loc"] in D.BRIDGES and awake(c):
+			who = c
+			break
+	if who < 0:
+		return
+	var cands := []
+	for r in D.outside_data()["airlocks"]:
+		var sk: String = "s_" + str(r)
+		var near := false
+		for m in mon:
+			var ml: String = mon[m]["loc"]
+			if ml == sk or ml == r:
+				near = true
+		if near:
+			cands.append(r)
+	if cands.is_empty():
+		return
+	var seat := team_of(who) if mutiny() else 0
+	var opts_l := ["Nessuna"]
+	for r in cands:
+		opts_l.append(area_name(r))
+	phase = "mlock"
+	var c2 := await pick(seat, "lock", "%s dal Ponte: chiudi una camera stagna?" % cdef(who)["short"], opts_l, {"rooms": cands})
+	if c2 > 0:
+		locked[cands[c2 - 1]] = true
+		log_msg("%s chiude dal Ponte la camera stagna di %s." % [cname(who), area_name(cands[c2 - 1])])
+		changed.emit()
+
+
+## Le scialuppe fuori dalla nave: decollo dall'hangar, volo fra le zone di spazio, rientro, getto del razzo
+## e partenza per Snudl-1.
+func _boat_act(act: String, r: Dictionary) -> void:
+	var b := str(r.get("b", ""))
+	if not D.BOATS.has(b):
+		return
+	var cid := int(r.get("c", -1))
+	var ok := false
+	if crew.has(cid):
+		for s in special_actions(cid):
+			if s["act"] == act and s["b"] == b and (act != "bmove" or s["to"] == str(r.get("to", ""))):
+				ok = true
+	if not ok and act != "launch":
+		return
+	var bn: String = String(D.BOATS[b]["name"]).capitalize()
+	match act:
+		"launch":
+			var ids := []
+			for x in r.get("ids", []):
+				var id := int(x)
+				if on_board(id) and awake(id) and crew[id]["loc"] == b and not ids.has(id) and gear_of(id) in ["", "soot"] \
+						and (not mutiny() or team_of(id) == cur_team):
+					ids.append(id)
+			if ids.is_empty() or not boat_room(b, ids) or ids.filter(func(i): return not (crew[i]["k"] in ["robot", "mascot"])).is_empty():
+				return
+			if launched.has(b) or bout.has(b):
+				return
+			var sp: String = AR["s_" + b]["space"]
+			bout[b] = {"loc": sp, "back": 0, "gone": false, "team": cur_team}
+			for id in ids:
+				crew[id]["loc"] = sp
+				crew[id]["boat"] = b
+				moved[id] = true
+			log_msg("%s decolla dall'hangar con %s ed esce nello %s." % [bn, ", ".join(ids.map(func(i): return cdef(i)["short"])), area_name(sp).to_lower()])
+			last_area = sp
+			_fx("escape", {"b": b})
+		"bmove":
+			var to := str(r.get("to", ""))
+			bout[b]["loc"] = to
+			for id in boat_crew(b):
+				crew[id]["loc"] = to
+				moved[id] = true
+			log_msg("%s vola: %s." % [bn, area_name(to)])
+			last_area = to
+		"dock":
+			for id in boat_crew(b):
+				crew[id]["loc"] = b
+				crew[id]["boat"] = ""
+				moved[id] = true
+			bout.erase(b)
+			log_msg("%s rientra nel suo hangar." % bn)
+			last_area = b
+		"blast":
+			var sp2: String = bout[b]["loc"]
+			var cans := 2 if b == "cockboat" else 1
+			log_msg("%s accende i razzi a pochi metri dallo scafo: getto di fuoco su %s!" % [bn, area_name(sp2)])
+			var ch: String
+			var learn := false
+			if known.has("fuel"):
+				ch = known["fuel"]
+			else:
+				ch = _draw_learn()
+				learn = true
+			var eff := {}
+			for x in AR:
+				if AR[x]["kind"] == "scafo" and space_of(x) == sp2:
+					for m in mons_at(x):
+						for i in cans:
+							eff[m] = _eff_add(eff.get(m, {}), ch, "fuel")
+			var rep := _apply_effects(eff)
+			if learn:
+				if ch in ["frag", "stun5", "kill5", "kill4", "kill3"] and not rep["used"].has("fuel"):
+					cup.append(ch)
+				else:
+					_learn("fuel", ch)
+			for x in AR:
+				if AR[x]["kind"] == "scafo" and space_of(x) == sp2:
+					for c in crew_at(x):
+						var tot := _roll_show(5 * cans, "Getto del razzo contro %s" % cname(c))
+						if hit_crew(c, tot):
+							log_msg("   Il getto uccide %s (%d)!" % [cname(c), tot])
+							_crew_dies(c)
+							_fx("kill_crew", {"c": c, "area": x})
+			bout[b]["gone"] = true
+			bout[b]["back"] = turn_no + 3
+			for id in boat_crew(b):
+				moved[id] = true
+				attacked[id] = true
+			log_msg("%s schizza via nello spazio: tornerà fra tre turni." % bn)
+			_fx("explode", {})
+			last_area = sp2
+		"leave":
+			var ids2 := boat_crew(b)
+			launched[b] = true
+			bout.erase(b)
+			for id in ids2:
+				var w: int = crew[id]["w"]
+				if w >= 0:
+					wpn[w]["c"] = -1
+					wpn[w]["loc"] = b
+					crew[id]["w"] = -1
+				crew[id]["state"] = "boat"
+				crew[id]["loc"] = ""
+				crew[id]["boat"] = ""
+			boats.append({"b": b, "crew": ids2, "survivors": [], "fate": "", "team": cur_team})
+			log_msg("FUGA! %s fa rotta verso Snudl-1 con %s." % [bn, ", ".join(ids2.map(func(i): return cdef(i)["short"]))])
+			_fx("escape", {"b": b})
+			changed.emit()
+			_check_end()
+			return
+	changed.emit()
+	_check_end()
+
+
+## All'inizio del turno dell'equipaggio tornano le scialuppe schizzate via col getto del razzo.
+func _boats_back() -> void:
+	for b in bout:
+		if bout[b]["gone"] and turn_no >= int(bout[b]["back"]):
+			bout[b]["gone"] = false
+			log_msg("%s ritorna: %s." % [String(D.BOATS[b]["name"]).capitalize(), area_name(bout[b]["loc"])])
 
 
 # ================================================================ ammutinamento (3 giocatori)
@@ -1728,7 +2839,7 @@ func _attack_crew(x: String, entries: Array) -> void:
 		if not on_board(tg) or crew[tg]["loc"] != x:
 			continue
 		if not e["usew"]:
-			kill[tg] = kill.get(tg, 0) + int(cdef(cid)["att"])
+			kill[tg] = kill.get(tg, 0) + c_att(cid)
 			desc.append("%s a mani nude su %s" % [cdef(cid)["short"], cdef(tg)["short"]])
 			continue
 		var t: String = e["t"]
@@ -1745,8 +2856,8 @@ func _attack_crew(x: String, entries: Array) -> void:
 	log_msg("Ammutinamento in %s: %s." % [area_name(x), "; ".join(desc)])
 	_fx("attack", {"area": x, "crew": entries.map(func(e): return e["c"])})
 	for tg in kill:
-		var tot := _roll_show(kill[tg], "%d dadi contro %s (cost. %d)" % [kill[tg], cname(tg), cdef(tg)["con"]])
-		if tot >= int(cdef(tg)["con"]):
+		var tot := _roll_show(kill[tg], "%d dadi contro %s (cost. %d)" % [kill[tg], cname(tg), c_con(tg) + c_shell(tg)])
+		if hit_crew(tg, tot):
 			log_msg("   %s cade (%d)!" % [cname(tg), tot])
 			_crew_dies(tg)
 			_fx("kill_crew", {"c": tg, "area": x})
@@ -2068,7 +3179,7 @@ func _solo_dest(m: int) -> String:
 		return here
 	targets.sort_custom(func(x, y): return x[0] < y[0])
 	var goal: String = targets[0][1]
-	var paths := reach(here, int(D.MON[mon[m]["l"]]["mov"]), false)
+	var paths := reach(here, mmov(m), false)
 	var best := []
 	var bdist := dist(here, goal)
 	for a in paths:
@@ -2666,7 +3777,8 @@ func _finish() -> void:
 		else:
 			match kind:
 				"exterminated":
-					vp = [float(_pending_end["aboard"]) + home, D.VP_TAKEOVER if not boats.is_empty() else 0.0]
+					var aboard := float(_pending_end["aboard"]) if pods_gone.size() < 2 else 0.0
+					vp = [aboard + home, D.VP_TAKEOVER if not boats.is_empty() else 0.0]
 					winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
 					end_reason = "L'equipaggio ha sterminato le Cose Verdi."
 				"sd":
@@ -2677,6 +3789,12 @@ func _finish() -> void:
 					vp = [home, D.VP_TAKEOVER]
 					winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
 					end_reason = "L'equipaggio ha abbandonato la nave alle Cose Verdi."
+		if not pods_gone.is_empty():
+			var pen := 20.0 * pods_gone.size()
+			vp[0] = maxf(0.0, vp[0] - pen)
+			if vp.size() >= 3:
+				vp[2] = maxf(0.0, vp[2] - pen)
+			end_reason += " (Serbatoi esplosi: -%d punti all'equipaggio)" % int(pen)
 		log_msg("■ " + end_reason)
 	var wtxt := {"crew": "Vince l'Equipaggio!", "mon": "Vincono le Cose Verdi!", "draw": "Pareggio.",
 		"cap": "Vince il Capitano!", "fo": "Vince il Primo Ufficiale!"}

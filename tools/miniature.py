@@ -3,12 +3,13 @@
 Ogni modello ha due parti: la basetta (colore della pedina di cartone: crema per l'equipaggio, giallo per
 le Cose Verdi, blu per le armi) e la figura (colore della razza, verde mostro, colore dell'arma).
 Le mesh vengono semplificate per la versione web. Asse verticale Y, unità in metri come Godot (1 mm = 0.001).
-Uso: python3 tools/miniature.py <cartella degli STL> <assets/minis>
+Uso: python3 tools/miniature.py <cartella degli STL> <assets/minis> [solo questi modelli...]
 """
 import sys, os, numpy as np, trimesh
 from trimesh.visual.material import PBRMaterial
 
 src, out = sys.argv[1], sys.argv[2]
+ONLY = sys.argv[3:]
 YEL, BLU, RED, GRN = "#f2c21b", "#2f7fd1", "#d8342a", "#3f9b3a"
 CREW = {
     "captain": ("Captain Yid", YEL), "first_officer": ("1st Officer", BLU), "comm_officer": ("Comm Officer", RED),
@@ -35,6 +36,8 @@ def mat(col, rough=0.6):
 
 
 def convert(stl, dest, fig_col, base_col, faces):
+    if ONLY and dest not in ONLY:
+        return 0
     m = trimesh.load(os.path.join(src, stl + ".stl"))
     if len(m.faces) > faces:
         m = m.simplify_quadric_decimation(face_count=faces)
@@ -82,4 +85,7 @@ tot += convert("Znutar", "znutar", "#b8bdc6", "#2a2a2a", 12000)
 tot += convert("Znutar Base", "znutar_base", "#2a2a2a", "#2a2a2a", 2000)
 for k, f in [("saucer", "Saucer"), ("scout", "Scout"), ("cockboat", "Cockboat")]:
     tot += convert(f, "boat_" + k, "#aab0b9", "#aab0b9", 8000)
+# «Fuori dalla Znutar»: tuta a reazione, carrello elevatore e la tuta della Mascotte
+for k, f, col in [("jet", "Jet Suit", "#9cc3e6"), ("mover", "Cargo Mover", "#e8c23a"), ("soot", "Ook Suit", "#6f8fd8")]:
+    tot += convert(f, "g_" + k, col, "#f4ecd0", 5000)
 print("facce totali", tot)

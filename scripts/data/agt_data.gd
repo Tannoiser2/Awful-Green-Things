@@ -4,6 +4,15 @@ extends RefCounted
 ## assets/data/aree.json, ricavate dal tabellone con tools/genera_aree.py.
 
 const AREAS_FILE := "res://assets/data/aree.json"
+const OUTSIDE_FILE := "res://assets/data/esterno.json"
+## Fuori dalla Znutar: tute a reazione (8), carrelli elevatori (2) e la tuta della Mascotte.
+const GEAR := {
+	"jet": {"name": "Tuta a reazione", "short": "Tuta a reazione", "att": 1, "con": 20, "mov": 1, "start": {"scout": 2, "saucer": 2, "cockboat": 2, "cargo": 2}},
+	"mover": {"name": "Carrello elevatore", "short": "Carrello", "att": 3, "con": 40, "mov": 1, "start": {"cargo": 2}},
+	"soot": {"name": "Tuta della Mascotte", "short": "Ook Soot", "att": 0, "con": 0, "mov": 3, "start": {"dc": 1}},
+}
+## Dove può andare un carrello elevatore (oltre allo spazio).
+const MOVER_ROOMS := ["cargo", "scout", "saucer", "cockboat"]
 
 ## Equipaggio: att = dadi d'attacco, con = costituzione, mov = movimento, start = aree di partenza.
 ## «Uno dei Ponti» = bridge1/bridge2; «un Sensore» = sensor1/sensor2; alloggi = i quattro alloggi.
@@ -42,6 +51,40 @@ const MON := {
 	"F": {"name": "Frammento", "plural": "Frammenti", "att": 1, "con": 8, "mov": 0, "limit": 22, "img": "fragment"},
 }
 const MON_ORDER := ["A", "B", "F", "E"]
+## Specie di mostri (Updates and Optional Rules v1.2): le Cose Verdi, le Cose Arancioni (The Obnoxious Orange
+## Things from Another Place, Tom Wham) e le Cose Viola (The Insidious Purple Things, Allen Varney e Val
+## Cassotta). Le Arancioni non hanno uova: gli Adulti esplodono in Frammenti; le Viola non hanno Frammenti:
+## gli Adulti che mangiano si dividono in Giovani e passano attraverso le pareti.
+const SPECIES := {
+	"green": {"name": "Cose Verdi", "one": "Cosa Verde", "mon": MON},
+	"orange": {"name": "Cose Arancioni", "one": "Cosa Arancione", "mon": {
+		"A": {"name": "Adulto", "plural": "Adulti", "att": 5, "con": 15, "mov": 3, "limit": 16, "img": "adult"},
+		"B": {"name": "Giovane", "plural": "Giovani", "att": 2, "con": 11, "mov": 2, "limit": 20, "img": "baby"},
+		"E": {"name": "Uovo", "plural": "Uova", "att": 0, "con": 5, "mov": 0, "limit": 0, "img": "egg"},
+		"F": {"name": "Frammento", "plural": "Frammenti", "att": 1, "con": 7, "mov": 1, "limit": 24, "img": "fragment"}}},
+	"purple": {"name": "Cose Viola", "one": "Cosa Viola", "mon": {
+		"A": {"name": "Adulto", "plural": "Adulti", "att": 1, "con": 20, "mov": 3, "limit": 15, "img": "adult"},
+		"B": {"name": "Giovane", "plural": "Giovani", "att": 3, "con": 10, "mov": 1, "limit": 28, "img": "baby"},
+		"E": {"name": "Uovo", "plural": "Uova", "att": 0, "con": 6, "mov": 0, "limit": 17, "img": "egg"},
+		"F": {"name": "Frammento", "plural": "Frammenti", "att": 1, "con": 8, "mov": 0, "limit": 0, "img": "fragment"}}},
+}
+## Popolazione iniziale delle Cose Viola (Uova, Giovani, Adulti).
+const PURPLE_POP := [[5, 6, 2], [5, 5, 3], [4, 6, 3], [3, 7, 3], [2, 6, 4], [1, 7, 4]]
+## Dove le Cose Viola non possono entrare attraverso le pareti.
+const PURPLE_NO_OOZE := ["aft_ms", "sick", "hospital", "science"]
+## Revenge of the Awful Green Things: i Megadulti (super-Adulti; contano come Adulti).
+const MEGA := {
+	"slimer": {"name": "il Melmoso", "short": "Melmoso", "att": 5, "con": 22, "mov": 2, "tip": "scioglie le pareti e passa nella stanza accanto; mangia le armi"},
+	"breeder": {"name": "la Covatrice", "short": "Covatrice", "att": 1, "con": 22, "mov": 1, "tip": "depone uova anche quando crescono gli altri; 5 dadi dove ci sono uova o piccoli"},
+	"flamer": {"name": "il Lanciafiamme", "short": "Lanciafiamme", "att": 2, "con": 22, "mov": 2, "tip": "12 dadi di fiamme nella sua area o 6 in un'area accanto; chi brucia non si mangia"},
+	"tentacles": {"name": "il Tentacolone", "short": "Tentacolone", "att": 8, "con": 22, "mov": 2, "tip": "8 dadi d'attacco"},
+	"runner": {"name": "il Corridore", "short": "Corridore", "att": 4, "con": 22, "mov": 4, "tip": "corre fino a 4 aree e porta con sé uova e piccoli"},
+	"scales": {"name": "il Corazzato", "short": "Corazzato", "att": 5, "con": 32, "mov": 2, "tip": "corazza: costituzione 32"},
+	"webber": {"name": "il Tessitore", "short": "Tessitore", "att": 4, "con": 22, "mov": 2, "tip": "tesse ragnatele che fermano l'equipaggio"},
+	"brainiac": {"name": "il Cervellone", "short": "Cervellone", "att": 2, "con": 20, "mov": 3, "tip": "impara a usare le armi dell'equipaggio e può avviare l'autodistruzione"},
+}
+## Gettoni della metamorfosi: gli 8 Megadulti, «Fallimento metabolico» e «Due uova».
+const MEGA_CHITS := ["slimer", "breeder", "flamer", "tentacles", "runner", "scales", "webber", "brainiac", "fail", "eggs2"]
 
 ## Popolazione iniziale (tiro di un dado): [uova, piccoli, adulti].
 const POPULATION := [[6, 4, 2], [6, 3, 3], [5, 4, 3], [4, 4, 4], [2, 5, 4], [1, 6, 4]]
@@ -126,6 +169,16 @@ static func areas() -> Dictionary:
 			_areas[a["id"]] = a
 			_area_list.append(a["id"])
 	return _areas
+
+
+static var _outside := {}
+
+## Aree esterne (scafo e spazio) e camere stagne.
+static func outside_data() -> Dictionary:
+	if _outside.is_empty():
+		var f := FileAccess.open(OUTSIDE_FILE, FileAccess.READ)
+		_outside = JSON.parse_string(f.get_as_text())
+	return _outside
 
 
 static func area_list() -> Array:

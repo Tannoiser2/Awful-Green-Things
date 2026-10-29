@@ -246,7 +246,10 @@ func _arms_refresh() -> void:
 		for w in engine.wpn:
 			if engine.wpn[w]["t"] == t and not engine.wpn[w]["out"]:
 				gone = false
-		if k != "":
+		var table: bool = t == "zgwortz" and engine.opts.get("kitchen", false)
+		if table:
+			tip += "\nRegola della Cucina: a ogni barattolo un dado (1-2 Cresce, 3 niente, 4 quattro dadi per uccidere, 5 cinque per stordire, 6 reazione allergica mortale)."
+		elif k != "":
 			tip += "\nEffetto: " + engine.chit_name(k)
 			if engine.known2.has(t):
 				tip += "\nAltra frequenza: " + engine.chit_name(engine.known2[t])
@@ -270,7 +273,7 @@ func _arms_refresh() -> void:
 			ch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 			vb.add_child(ch)
 		else:
-			var q := UI.heading("?", 20, UI.YELLOW)
+			var q := UI.heading("dado" if table else "?", 20, UI.YELLOW)
 			q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			vb.add_child(q)
 		arms_grid.add_child(holder)
@@ -298,9 +301,9 @@ func _refresh() -> void:
 		return
 	var ph := {"crew_setup": "Preparazione", "mon_setup": "Le uova", "discovery": "Scoperta!", "discovery_attack": "Scoperta!",
 		"grow": "Crescita", "mmove": "Le Cose Verdi si muovono", "mattack": "Le Cose Verdi attaccano", "grab": "Prendere le armi",
-		"cmove": "Movimento", "alert": "Allarme!", "cattack": "Attacco dell'equipaggio", "epilogue": "Epilogo", "fine_partita": "Fine"}
+		"cmove": "Movimento", "alert": "Allarme!", "mlock": "Camere stagne", "cattack": "Attacco dell'equipaggio", "epilogue": "Epilogo", "fine_partita": "Fine"}
 	var who := ""
-	if engine.phase in ["grow", "mmove", "mattack", "mon_setup"]:
+	if engine.phase in ["grow", "mmove", "mattack", "mon_setup", "mlock"]:
 		who = engine.pname(1)
 	elif engine.phase != "fine_partita":
 		who = engine.pname(engine.cur_team if engine.mutiny() else 0)
@@ -334,19 +337,28 @@ func _info(a: String) -> void:
 			s += " con " + engine.wname(engine.wtype(engine.crew[c]["w"]))
 		if not engine.awake(c):
 			s += " [stordito]"
+		if engine.outside() and engine.gear_of(c) != "":
+			s += " in " + D.GEAR[engine.gear_of(c)]["name"]
+		if engine.outside() and engine.crew[c].get("boat", "") != "":
+			s += " a bordo " + D.BOATS[engine.crew[c]["boat"]]["of"]
 		if engine.mutiny():
 			var tm := engine.team_of(c)
 			s += " [%s]" % ("Capitano" if tm == 0 else ("Primo Uff." if tm == 2 else "senza padrone"))
 		parts.append(s)
 	var cnt := {}
 	var st := 0
-	for m in engine.mons_at(a):
+	for m in (engine.seen_mons_at(a) if fog() else engine.mons_at(a)):
 		cnt[engine.mon[m]["l"]] = cnt.get(engine.mon[m]["l"], 0) + 1
 		if engine.mon[m]["st"]:
 			st += 1
 	var mp := []
+	for m in (engine.seen_mons_at(a) if fog() else engine.mons_at(a)):
+		if engine.is_mega(m):
+			cnt[engine.mon[m]["l"]] -= 1
+			var mg: String = engine.mon[m]["mega"]
+			mp.append("[color=#ffd923]%s[/color] (%d/%d/%d: %s)" % [D.MEGA[mg]["name"], engine.matt(m), engine.mcon(m), engine.mmov(m), D.MEGA[mg]["tip"]])
 	for l in D.MON_ORDER:
-		if cnt.has(l):
+		if cnt.get(l, 0) > 0:
 			mp.append("%d %s" % [cnt[l], D.MON[l]["plural"] if cnt[l] > 1 else D.MON[l]["name"]])
 	var wp := []
 	for w in engine.weapons_at(a):
@@ -366,6 +378,12 @@ func _info(a: String) -> void:
 		txt += "\n[color=#7be04a]Cose Verdi:[/color] " + ", ".join(mp) + (" (%d storditi)" % st if st > 0 else "")
 	if not wp.is_empty():
 		txt += "\n[color=#ff9a4a]A terra:[/color] " + ", ".join(wp)
+	if engine.webs.has(a):
+		txt += "\n[color=#e8e8e8]Ragnatela del Tessitore: l'equipaggio che entra si ferma.[/color]"
+	if engine.extra_adj.has(a):
+		txt += "\n[color=#9be37a]Buchi nelle pareti verso:[/color] " + ", ".join((engine.extra_adj[a] as Array).map(func(x): return engine.area_name(x)))
+	if engine.pods_gone.has(a):
+		txt += "\n[color=#ff9a4a]Il Serbatoio è esploso.[/color]"
 	info_lbl.text = txt
 
 
@@ -410,6 +428,8 @@ func _on_fx(kind: String, data: Dictionary) -> void:
 			_pop_center("KA-BOOOM!", UI.ORANGE)
 		"alert":
 			_pop_word(data["area"], "ALLARME!", UI.ORANGE)
+		"mega":
+			_pop_word(data["area"], "METAMORFOSI!", UI.SLIME)
 		"free":
 			_pop_word(data["area"], "LIBERO!", UI.CREAM)
 		"charge_soon":
@@ -520,6 +540,11 @@ func _submit(r) -> void:
 	engine.provide_decision(r)
 
 
+## Mostri nascosti: chi guida solo l'equipaggio vede solo le Cose Verdi in vista.
+func fog() -> bool:
+	return engine.hidden_mode() and not local_seats.is_empty() and not (1 in local_seats)
+
+
 func _seat() -> int:
 	return int(pending.get("seat", 0))
 
@@ -527,7 +552,7 @@ func _seat() -> int:
 ## Piano d'attacco suggerito dall'IA per un'area (mostri, o avversari nell'ammutinamento).
 func _sug_plan(a: String) -> Array:
 	var ai: AGTAI = engine.ais[_seat()]
-	var p := ai._plan_area(engine, a) if not engine.mons_at(a).is_empty() else []
+	var p := ai._plan_area(engine, a) if not engine.seen_mons_at(a).is_empty() else []
 	if p.is_empty() and engine.mutiny():
 		p = ai._plan_crew_area(engine, a)
 	return p
@@ -712,8 +737,9 @@ func _build_mmove() -> void:
 		_add_text("Tocca un'area con Cose Verdi da muovere (in verde). Gli Adulti fanno 2 aree, i Piccoli 1; si fermano entrando dove c'è equipaggio sveglio o un recinto acceso.", UI.MUTED)
 	else:
 		_add_text("Scegli quali muovere, poi tocca la destinazione (in azzurro).", UI.MUTED)
+		var has_runner := engine.mons_at(sel_area).any(func(x): return engine.is_mega(x, "runner") and engine.mon_mobile(x))
 		for m in engine.mons_at(sel_area):
-			if not engine.mon_mobile(m):
+			if not engine.mon_mobile(m) and not (has_runner and engine.mon[m]["l"] == "E" and not engine.moved.has(m) and not engine.mon[m]["st"]):
 				continue
 			var cb := CheckBox.new()
 			cb.text = "%s" % engine.mname(m)
@@ -867,8 +893,8 @@ func _build_cmove() -> void:
 			_add_text("Tocca la destinazione (in azzurro).", UI.MUTED)
 		for s in engine.special_actions(c):
 			var ss: Dictionary = s
-			if ss["act"] == "escape":
-				_add_btn(str(ss["label"]), func(): _escape_dialog(ss["b"]))
+			if ss["act"] in ["escape", "launch"]:
+				_add_btn(str(ss["label"]), func(): _escape_dialog(ss["b"], ss["act"]))
 			else:
 				var r := ss.duplicate()
 				r.erase("label")
@@ -881,11 +907,16 @@ func _build_cmove() -> void:
 		_foot_btn("Fine movimento", func(): _submit({}), true)
 
 
-func _escape_dialog(b: String) -> void:
+func _escape_dialog(b: String, act := "escape") -> void:
 	_clear_box()
-	var here := engine.crew_at(b).filter(func(x): return engine.awake(x))
+	var here := engine.crew_at(b).filter(func(x): return engine.awake(x) and (not engine.mutiny() or engine.team_of(x) == engine.cur_team))
+	if act == "launch":
+		here = here.filter(func(x): return engine.gear_of(x) in ["", "soot"])
 	var cap: int = D.BOATS[b]["cap"]
-	_add_text("Chi sale su %s? %s Il Robot e la Mascotte non contano. Fuggire regala alle Cose Verdi 111 punti (55,5 se la nave sta per autodistruggersi)." % [D.BOATS[b]["name"], ("Posti: %d." % cap) if cap > 0 else "Posti illimitati."], UI.ORANGE_L)
+	if act == "launch":
+		_add_text("Chi sale su %s? %s Il Robot e la Mascotte non contano; tute a reazione e carrelli non entrano. La scialuppa esce nello spazio attorno alla nave: da lì può tornare, colpire lo scafo o partire per Snudl-1." % [D.BOATS[b]["name"], ("Posti: %d." % cap) if cap > 0 else "Posti illimitati."], UI.CREAM)
+	else:
+		_add_text("Chi sale su %s? %s Il Robot e la Mascotte non contano. Fuggire regala alle Cose Verdi 111 punti (55,5 se la nave sta per autodistruggersi)." % [D.BOATS[b]["name"], ("Posti: %d." % cap) if cap > 0 else "Posti illimitati."], UI.ORANGE_L)
 	var chosen := {}
 	for c in here:
 		var cb := CheckBox.new()
@@ -904,7 +935,7 @@ func _escape_dialog(b: String) -> void:
 		if not engine.boat_room(b, ids):
 			status_lbl.text = "Troppi a bordo!"
 			return
-		_submit({"act": "escape", "b": b, "ids": ids}), true)
+		_submit({"act": act, "b": b, "ids": ids}), true)
 	_foot_btn("Annulla", func(): _build_decision())
 
 
@@ -920,7 +951,7 @@ func _build_cattack() -> void:
 		_foot_btn("Fine degli attacchi", func(): _submit({}), true)
 		return
 	board.selected_area = plan_area
-	var ms := engine.mons_at(plan_area)
+	var ms := engine.seen_mons_at(plan_area)
 	for i in ms.size():
 		board.tags[ms[i]] = LETTERS[i % LETTERS.length()]
 	_add_text("Attacco in %s. Tutte le dichiarazioni si risolvono insieme: le armi nuove pescano un gettone (se ne provi due insieme, il gettone vale solo per quest'attacco)." % engine.area_name(plan_area), UI.MUTED)

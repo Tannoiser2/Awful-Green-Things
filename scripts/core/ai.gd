@@ -93,6 +93,20 @@ func _pick(e: AGTEngine, req: Dictionary) -> int:
 			return 0
 		"alt1", "alt16", "alt27":
 			return 0
+		"eatw":
+			# si mangiano le armi che fanno male alle Cose Verdi
+			var w: int = req.get("w", -1)
+			var k := e.effect_of(e.wtype(w)) if w >= 0 else ""
+			return 0 if (k.begins_with("kill") or k == "shrink" or k == "stun5") else 1
+		"lock":
+			# si chiude la camera stagna dove le Cose Verdi stanno per entrare
+			var rooms: Array = req.get("rooms", [])
+			for i in rooms.size():
+				var r: String = rooms[i]
+				var outside_m := e.mons_at("s_" + r).size()
+				if outside_m > 0 and e.mons_at(r).is_empty():
+					return i + 1
+			return 0
 		"alt4":
 			return 2 if _boat_has(e, req, "first_officer") else 0
 		"alt26":
@@ -332,7 +346,9 @@ func _hunt_value(e: AGTEngine, a: String, occ: Dictionary) -> float:
 
 func _quiet_value(e: AGTEngine, a: String, occ: Dictionary) -> float:
 	var d := _crew_dist(e, a)
-	return minf(d, 4.0) - 0.6 * float(occ.get(a, 0))
+	# fuori dalla nave le Cose Verdi stanno al sicuro solo finché l'equipaggio non indossa tute e carrelli
+	var out_pen := 1.5 if e.outside() and e.is_out(a) else 0.0
+	return minf(d, 4.0) - 0.6 * float(occ.get(a, 0)) - out_pen
 
 
 func _mattack(e: AGTEngine, req: Dictionary) -> Dictionary:
@@ -415,6 +431,27 @@ func _grab(e: AGTEngine, req: Dictionary) -> int:
 		var a: Dictionary = acts[i]
 		var v := 0.0
 		match a["a"]:
+			"suit":
+				var g: String = e.gear[a["g"]]["t"]
+				var outm := 0
+				for m in e.mon:
+					if e.is_out(e.mon[m]["loc"]):
+						outm += 1
+				if _doom(e):
+					pass
+				elif g == "jet" and outm > 0 and (e.crew[a["c"]]["w"] < 0 or _weapon_value(e, e.wtype(e.crew[a["c"]]["w"]), a["c"]) < 3.0):
+					v = 3.0 + outm * 0.3
+				elif g == "mover" and outm >= 2 and (e.crew[a["c"]]["k"] == "robot" or e.cdef(a["c"])["att"] <= 2):
+					v = 4.0 + (1.0 if e.crew[a["c"]]["k"] == "robot" else 0.0)
+			"unsuit":
+				var outm2 := 0
+				for m in e.mon:
+					if e.is_out(e.mon[m]["loc"]):
+						outm2 += 1
+				if outm2 == 0:
+					v = 2.0
+				if _doom(e) and e.crew[a["c"]]["loc"] in D.BOATS:
+					v = 5.0   # si scende per salire sulla scialuppa
 			"take":
 				var c: int = a["c"]
 				var t: String = e.wtype(a["w"])
@@ -502,8 +539,12 @@ func _cmove(e: AGTEngine, req: Dictionary) -> Dictionary:
 	# azioni speciali
 	for c in e.board_crew():
 		for s in e.special_actions(c):
-			if s["act"] == "escape" and doom:
-				var ids := e.crew_at(s["b"]).filter(func(x): return e.awake(x))
+			if s["act"] == "leave" and doom:
+				return {"act": "leave", "b": s["b"], "c": c}
+			if s["act"] == "dock" and not doom and e.mon.size() > 0:
+				return {"act": "dock", "b": s["b"], "c": c}
+			if s["act"] in ["escape", "launch"] and doom:
+				var ids := e.crew_at(s["b"]).filter(func(x): return e.awake(x) and e.gear_of(x) in ["", "soot"] and (not e.mutiny() or e.team_of(x) == e.cur_team))
 				ids.sort_custom(func(x, y): return e.cdef(x)["con"] > e.cdef(y)["con"])
 				var take := []
 				for x in ids:
@@ -512,7 +553,7 @@ func _cmove(e: AGTEngine, req: Dictionary) -> Dictionary:
 					if e.boat_room(s["b"], t2):
 						take = t2
 				if not take.is_empty() and not take.filter(func(x): return not (e.crew[x]["k"] in ["robot", "mascot"])).is_empty():
-					return {"act": "escape", "b": s["b"], "ids": take}
+					return {"act": s["act"], "b": s["b"], "ids": take}
 			if s["act"] == "sd" and doom:
 				return {"act": "sd", "c": c}
 			if s["act"] == "fence" and _want_fence(e, c):
@@ -545,20 +586,25 @@ var _hunt := {}
 ## per uccidere (le armi da provare valgono un paio di dadi, Rimpicciolisce ne vale 6).
 func _contrib(e: AGTEngine, c: int, d: String, x: String) -> Dictionary:
 	var out := {"hand": 0, "single": 0, "area": 0}
+	var from_space: bool = e.outside() and e.is_space(d) and e.AR[x]["kind"] == "scafo" and e.space_of(x) == d
 	if d == x and e.crew[c]["k"] != "mascot":
-		out["hand"] = int(e.cdef(c)["att"])
+		out["hand"] = e.c_att(c)
+	if from_space and e.gear_of(c) in ["jet", "mover"]:
+		out["hand"] = 8 if e.gear_of(c) == "mover" else 1
 	var w: int = e.crew[c]["w"]
 	if w >= 0:
 		var t := e.wtype(w)
 		var r: String = D.WEAPONS[t]["range"]
-		var ok := false
+		var ok: bool = from_space and e.works_outside(t) and r != "none"
 		match r:
 			"same":
-				ok = d == x
+				ok = ok or d == x
 			"adj":
-				ok = d == x or x in e.adj(d)
+				ok = ok or d == x or x in e.adj(d)
 			"los":
-				ok = x in e.los(d)
+				ok = ok or x in e.los(d)
+		if e.outside() and (e.is_out(x) or e.is_out(d)) and not e.works_outside(t):
+			ok = false
 		if ok:
 			var k := e.effect_of(t)
 			var dd := 0
@@ -690,7 +736,7 @@ func _danger(e: AGTEngine, a: String) -> float:
 		var l: String = e.mon[id]["l"]
 		if l in ["A", "B"]:
 			var dd := e.dist(e.mon[id]["loc"], a)
-			if dd <= int(D.MON[l]["mov"]):
+			if dd <= e.mmov(id):
 				d += float(e.matt(id))
 		elif e.mon[id]["loc"] == a:
 			d += float(e.matt(id))
@@ -722,6 +768,8 @@ func _crew_dest(e: AGTEngine, c: int, paths: Dictionary, doom: bool) -> String:
 			v -= dng * 0.2
 		elif k == "mascot":
 			v = -dng * 2.0
+		elif e.gear_of(c) in ["jet", "mover"]:
+			v = _melee_value(e, a, c) * 1.5 - _approach(e, a) * (0.4 if e.gear_of(c) == "mover" else 1.0)
 		elif w < 0 and k != "robot":
 			# senza arma: andare a prenderne una
 			var wd := 99
@@ -805,7 +853,14 @@ func _hit_value(e: AGTEngine, t: String, x: String) -> float:
 
 func _melee_value(e: AGTEngine, a: String, c: int) -> float:
 	var v := 0.0
-	var att := int(e.cdef(c)["att"])
+	var att := e.c_att(c)
+	if e.outside() and e.is_space(a) and e.gear_of(c) in ["jet", "mover"]:
+		# dallo spazio si colpisce lo scafo della zona senza essere attaccati
+		for x in e.AR:
+			if e.AR[x]["kind"] == "scafo" and e.space_of(x) == e.space_of(a):
+				for id in e.mons_at(x):
+					v += (1.0 if e.gear_of(c) == "mover" else p_at_least(att + 1, e.mcon(id))) * 2.5
+		return v
 	for id in e.mons_at(a):
 		v += p_at_least(att + 2, e.mcon(id)) * (2.0 if e.mon[id]["l"] in ["A", "B"] else 1.2)
 	return v
@@ -865,7 +920,7 @@ func _good(k: String) -> bool:
 func _cattack(e: AGTEngine, req: Dictionary) -> Dictionary:
 	var areas: Array = req["areas"]
 	for a in areas:
-		var atk := _plan_area(e, a) if not e.mons_at(a).is_empty() else []
+		var atk := _plan_area(e, a) if not e.seen_mons_at(a).is_empty() else []
 		if atk.is_empty() and e.mutiny() and not req.get("discovery", false):
 			atk = _plan_crew_area(e, a)
 		if not atk.is_empty():
@@ -904,9 +959,11 @@ func _plan_crew_area(e: AGTEngine, a: String) -> Array:
 					continue
 				dd = int(k.substr(4))
 			else:
-				if e.crew[c]["loc"] != a:
+				if e.crew[c]["loc"] != a and not e.is_space(e.crew[c]["loc"]):
 					continue
-				dd = int(e.cdef(c)["att"])
+				dd = e.c_att(c)
+				if e.gear_of(c) == "mover" and e.is_space(e.crew[c]["loc"]):
+					dd = 30   # lo scaglia nello spazio
 			if dd <= 0:
 				continue
 			used[c] = true
@@ -924,7 +981,7 @@ func _plan_crew_area(e: AGTEngine, a: String) -> Array:
 
 func _plan_area(e: AGTEngine, a: String) -> Array:
 	var cands := e.attackers_for(a)
-	var ms := e.mons_at(a)
+	var ms := e.seen_mons_at(a)
 	var used := {}
 	var atk := []
 	var kill := {}
@@ -999,9 +1056,11 @@ func _plan_area(e: AGTEngine, a: String) -> Array:
 					else:
 						continue
 				else:
-					if e.crew[c]["loc"] != a:
+					if e.crew[c]["loc"] != a and not e.is_space(e.crew[c]["loc"]):
 						continue
-					dd = int(e.cdef(c)["att"])
+					dd = e.c_att(c)
+					if e.gear_of(c) == "mover" and e.is_space(e.crew[c]["loc"]):
+						dd = 30   # lo scaglia nello spazio
 				var v := float(dd)
 				if v > bestv:
 					bestv = v

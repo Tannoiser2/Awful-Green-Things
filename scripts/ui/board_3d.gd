@@ -132,7 +132,110 @@ func _ready() -> void:
 
 func set_engine(eng: AGTEngine) -> void:
 	e = eng
+	if e.outside():
+		_build_outside()
 	refresh()
+
+
+var ext_rect := Rect2()
+
+## «Fuori dalla Znutar»: il tappeto dello spazio sotto il tabellone, i tratti di scafo e le zone di spazio.
+func _build_outside() -> void:
+	ext_rect = Rect2(Vector2.ZERO, board_size / U)
+	for a in e.AR:
+		if e.is_out(a):
+			for q in e.AR[a]["poly"]:
+				ext_rect = ext_rect.expand(Vector2(q[0], q[1]))
+	var root := Node3D.new()
+	root.name = "esterno"
+	vp.add_child(root)
+	var mat := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = (ext_rect.size + Vector2(80, 80)) * U
+	mat.mesh = pm
+	mat.position = Vector3((ext_rect.position.x + ext_rect.size.x * 0.5) * U, -0.06, (ext_rect.position.y + ext_rect.size.y * 0.5) * U)
+	var mm := StandardMaterial3D.new()
+	mm.albedo_color = Color("#070f22")
+	mm.roughness = 0.9
+	mat.material_override = mm
+	root.add_child(mat)
+	# stelle
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var stars := MultiMeshInstance3D.new()
+	var mmesh := MultiMesh.new()
+	mmesh.transform_format = MultiMesh.TRANSFORM_3D
+	var sph := SphereMesh.new()
+	sph.radius = 0.012
+	sph.height = 0.024
+	var sm := StandardMaterial3D.new()
+	sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sm.albedo_color = Color("#cfe0ff")
+	sph.material = sm
+	mmesh.mesh = sph
+	mmesh.instance_count = 420
+	for i in 420:
+		var x := rng.randf_range(ext_rect.position.x - 30, ext_rect.end.x + 30) * U
+		var z := rng.randf_range(ext_rect.position.y - 30, ext_rect.end.y + 30) * U
+		mmesh.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * rng.randf_range(0.5, 1.6)), Vector3(x, -0.05, z)))
+	stars.multimesh = mmesh
+	root.add_child(stars)
+	for a in e.AR:
+		if e.AR[a]["kind"] == "scafo":
+			_plate(root, a, Color(0.55, 0.64, 0.8), 0.38, 0.002)
+		elif e.is_space(a):
+			var l := Label3D.new()
+			l.text = String(e.AR[a]["name"]).to_upper()
+			l.font = UI.font_comic
+			l.font_size = 96
+			l.pixel_size = 0.006
+			l.modulate = Color("#6f93d0")
+			l.outline_size = 0
+			var mid := ext_rect.get_center()
+			var lp := mid
+			var rot := 0.0
+			match a:
+				"sp_top":
+					lp = Vector2(mid.x, ext_rect.position.y + 45)
+				"sp_under":
+					lp = Vector2(mid.x, ext_rect.end.y - 45)
+				"sp_bow":
+					lp = Vector2(ext_rect.position.x + 45, mid.y)
+					rot = 90.0
+				"sp_stern":
+					lp = Vector2(ext_rect.end.x - 45, mid.y)
+					rot = -90.0
+			l.rotation_degrees = Vector3(-90, rot, 0)
+			l.position = bpos(lp) + Vector3(0, 0.004, 0)
+			root.add_child(l)
+	# la Znutar sul supporto e le scialuppe ormeggiate si spostano oltre lo spazio
+	var ship: Node3D = vp.get_node_or_null("znutar_decor")
+	if ship != null:
+		ship.position.x = ext_rect.position.x * U - 1.6
+	_dock_z = ext_rect.end.y * U + 0.9
+
+
+var _dock_z := 0.0
+
+func _plate(root: Node3D, a: String, col: Color, alpha: float, y: float) -> void:
+	var poly := _poly(a)
+	var idx := Geometry2D.triangulate_polygon(poly)
+	if idx.is_empty():
+		return
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in idx:
+		st.add_vertex(bpos(poly[i]) + Vector3(0, y, 0))
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(col, alpha)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mi)
 
 
 func refresh() -> void:
@@ -306,6 +409,8 @@ func _model_name(kind: String, id) -> String:
 			return "crew_" + e.crew[id]["k"]
 		"h":
 			return "hidden"
+		"g":
+			return "g_" + str(e.gear[id]["t"])
 	return ""
 
 
@@ -332,7 +437,7 @@ func _layout() -> Dictionary:
 			items.append(["h", a])
 		for c in e.crew_at(a):
 			items.append(["c", c])
-		var ms := e.mons_at(a)
+		var ms := e.seen_mons_at(a) if (view != null and view.fog()) else e.mons_at(a)
 		ms.sort_custom(func(x, y): return D.MON_ORDER.find(e.mon[x]["l"]) < D.MON_ORDER.find(e.mon[y]["l"]) or (e.mon[x]["l"] == e.mon[y]["l"] and x < y))
 		for m in ms:
 			items.append(["m", m])
@@ -351,6 +456,9 @@ func _layout() -> Dictionary:
 			out[it[0] + str(it[1])] = [p, sc, it[0], it[1]]
 		# armi a terra: una fila sotto le pedine
 		var fl := e.weapons_at(a)
+		if e.outside():
+			for g in e.gear_at(a):
+				fl.append(-1000 - g)
 		if not fl.is_empty():
 			var c: Array = e.AR[a]["center"]
 			var base := Vector2(c[0], c[1])
@@ -361,7 +469,10 @@ func _layout() -> Dictionary:
 			for j in fl.size():
 				var w: int = fl[j]
 				var q := base + Vector2((j - (fl.size() - 1) * 0.5) * wsp, 0)
-				out["w" + str(w)] = [bpos(q), 0.55, "w", w]
+				if w <= -1000:
+					out["g" + str(-1000 - w)] = [bpos(q), 0.7, "g", -1000 - w]
+				else:
+					out["w" + str(w)] = [bpos(q), 0.55, "w", w]
 	return out
 
 
@@ -378,6 +489,7 @@ func _build_decor() -> void:
 	rocket.position = Vector3(0.0, 0.18, 0.0)
 	ship.add_child(rocket)
 	ship.scale = Vector3.ONE * 2.0
+	ship.name = "znutar_decor"
 	ship.position = Vector3(-1.4, -0.05, board_size.y * 0.35)
 	ship.rotation.y = 0.5
 	vp.add_child(ship)
@@ -395,6 +507,20 @@ func _place_boats() -> void:
 		var n: Node3D = boats[b]
 		var c: Array = e.AR[b]["center"]
 		var dock := Vector3(c[0] * U, -0.05, board_size.y + 0.75)
+		if _dock_z > 0.0:
+			dock.z = _dock_z
+		if e.bout.has(b):
+			# in volo attorno alla nave
+			var sp: String = e.bout[b]["loc"]
+			var sl: Array = e.AR[sp]["slots"]
+			var k := D.BOATS.keys().find(b)
+			var q: Array = sl[(k * 5) % sl.size()]
+			var to := bpos(Vector2(q[0], q[1])) + Vector3(0, 0.25, 0)
+			n.visible = not e.bout[b]["gone"]
+			if not n.position.is_equal_approx(to):
+				var tw0 := n.create_tween()
+				tw0.tween_property(n, "position", to, 0.5).set_trans(Tween.TRANS_SINE)
+			continue
 		if e.launched.has(b):
 			if not _launched_seen.has(b):
 				_launched_seen[b] = true
@@ -473,6 +599,26 @@ func _decorate(node: Node3D, kind: String, id) -> void:
 			mi.position.y = 0.03
 			node.add_child(mi)
 		return
+	if kind == "m":
+		# Megadulti: più grossi, con il nome sopra
+		var tagm: Label3D = node.get_node_or_null("mega")
+		if e.is_mega(id):
+			node.scale = node.scale * 1.3
+			if tagm == null:
+				tagm = Label3D.new()
+				tagm.name = "mega"
+				tagm.font = UI.font_comic
+				tagm.font_size = 54
+				tagm.pixel_size = 0.004
+				tagm.modulate = UI.SLIME
+				tagm.outline_modulate = UI.INK
+				tagm.outline_size = 12
+				tagm.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+				tagm.position = Vector3(0, 0.62, 0)
+				node.add_child(tagm)
+			tagm.text = String(D.MEGA[e.mon[id]["mega"]]["short"])
+		elif tagm != null:
+			tagm.queue_free()
 	var stunned := false
 	if kind == "c":
 		stunned = not e.awake(id)
@@ -513,6 +659,21 @@ func _decorate(node: Node3D, kind: String, id) -> void:
 			sq.position.y = 0.006
 			node.add_child(sq)
 		(sq.material_override as StandardMaterial3D).albedo_color = tc
+	# tuta o carrello indossati: la miniatura accanto
+	if kind == "c" and e.outside():
+		var gw := e.gear_of(id)
+		var suit: Node3D = node.get_node_or_null("tuta")
+		var wantg := ("g_" + gw) if gw != "" else ""
+		if suit != null and suit.get_meta("model") != wantg:
+			suit.queue_free()
+			suit = null
+		if suit == null and wantg != "":
+			suit = _mini(wantg)
+			suit.name = "tuta"
+			suit.set_meta("model", wantg)
+			suit.scale = Vector3.ONE * (1.1 if gw == "mover" else 0.8)
+			suit.position = Vector3(-0.3, 0.0, 0.18)
+			node.add_child(suit)
 	# anello di selezione
 	var ring := node.get_node_or_null("anello")
 	var sel: bool = sel_pieces.get(kind + str(id), false) == true
@@ -539,6 +700,28 @@ func _build_highlights() -> void:
 	for c in hl_root.get_children():
 		c.queue_free()
 	_hl_mats = []
+	for a in e.pods_gone:
+		_plate(hl_root, a, Color(0.04, 0.04, 0.04), 0.85, 0.008)
+	for a in e.webs:
+		_plate(hl_root, a, Color(1, 1, 1), 0.35, 0.009)
+	var seen_h := {}
+	for a in e.extra_adj:
+		for b in e.extra_adj[a]:
+			var key: String = a + "|" + b if a < b else b + "|" + a
+			if seen_h.has(key):
+				continue
+			seen_h[key] = true
+			var hole := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.16
+			cm.bottom_radius = 0.16
+			cm.height = 0.02
+			hole.mesh = cm
+			var hm := StandardMaterial3D.new()
+			hm.albedo_color = Color("#2f6e1f")
+			hole.material_override = hm
+			hole.position = bpos(e.hole_point(a, b)) + Vector3(0, 0.01, 0)
+			hl_root.add_child(hole)
 	for a in highlight:
 		_area_plate(a, highlight[a], 0.32, true)
 	for a in flash:
@@ -612,6 +795,9 @@ func _area_outline(a: String, col: Color, w: float) -> void:
 func _build_labels(lay: Dictionary) -> void:
 	for c in labels_root.get_children():
 		c.queue_free()
+	for a in e.webs:
+		var cw: Array = e.AR[a]["center"]
+		_label(bpos(Vector2(cw[0], cw[1])) + Vector3(0, 0.5, 0), "ragnatela", Color.WHITE)
 	for m in tags:
 		var k := "m" + str(m)
 		if lay.has(k):
@@ -674,6 +860,13 @@ func fit() -> void:
 	yaw = 0.0
 	pitch = -60.0
 	var pts := [Vector3(-2.6, 0, 0), Vector3(board_size.x, 0, 0), Vector3(-2.6, 0, board_size.y + 1.4), Vector3(board_size.x, 0, board_size.y + 1.4), Vector3(-1.4, 3.5, board_size.y * 0.35)]
+	if ext_rect.size.x > 0:
+		var x0 := ext_rect.position.x * U - 1.0
+		var x1 := ext_rect.end.x * U
+		var z0 := ext_rect.position.y * U
+		var z1 := ext_rect.end.y * U + 1.2
+		target = Vector3((x0 + x1) * 0.5, 0, (z0 + z1) * 0.5 + 0.6)
+		pts = [Vector3(x0, 0, z0), Vector3(x1, 0, z0), Vector3(x0, 0, z1), Vector3(x1, 0, z1)]
 	dist = 30.0
 	for it in 12:
 		_update_cam()
@@ -721,8 +914,8 @@ func _gui_input(ev: InputEvent) -> void:
 					var fwd := Vector3(-sin(deg_to_rad(yaw)), 0, -cos(deg_to_rad(yaw)))
 					var k := dist * 0.0015
 					target += (-right * mm.relative.x + fwd * mm.relative.y) * k
-					target.x = clampf(target.x, -2.0, board_size.x + 2.0)
-					target.z = clampf(target.z, -2.0, board_size.y + 2.0)
+					target.x = clampf(target.x, -5.0, board_size.x + 5.0)
+					target.z = clampf(target.z, -5.0, board_size.y + 5.0)
 				_update_cam()
 		else:
 			var a := area_at(mm.position)
@@ -781,7 +974,7 @@ func _click(pos: Vector2) -> void:
 	var best := ""
 	var bd := 1e9
 	for k in pieces:
-		if k.begins_with("h") or k.begins_with("p"):
+		if k.begins_with("h") or k.begins_with("p") or k.begins_with("g"):
 			continue
 		var n: Node3D = pieces[k]
 		var sp := _screen(n.position + Vector3(0, 0.25 * n.scale.x, 0))
