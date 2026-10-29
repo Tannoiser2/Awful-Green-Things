@@ -42,6 +42,10 @@ func set_engine(eng: AGTEngine) -> void:
 	e = eng
 
 
+func refresh() -> void:
+	queue_redraw()
+
+
 func fit() -> void:
 	if tex == null or size.x < 10:
 		return

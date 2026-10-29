@@ -17,6 +17,7 @@ var page: Control
 var modes := {"crew": 0, "mon": 2}
 var names := {"crew": "Equipaggio", "mon": "Cose Verdi"}
 var speed := 1
+var view3d := 1
 var variants := {}
 var msg: Label
 var seats_box: VBoxContainer
@@ -30,6 +31,7 @@ func _ready() -> void:
 		names = st["names"].duplicate()
 		speed = st["speed"]
 		variants = st["variants"].duplicate()
+		view3d = st.get("view3d", 1)
 	page = Control.new()
 	page.size = Vector2(1920, 1080)
 	add_child(page)
@@ -83,6 +85,7 @@ func _ready() -> void:
 		cb.toggled.connect(func(on): variants[key] = on)
 		rv.add_child(cb)
 	rv.add_child(_segmented("Velocità IA", ["Lenta", "Normale", "Veloce", "Istantanea"], speed, func(k): speed = k, 160))
+	rv.add_child(_segmented("Vista", ["2D: il tabellone", "3D: le miniature"], view3d, func(k): view3d = k, 330))
 
 	msg = UI.label("", 24, UI.ORANGE_L, UI.font_bold)
 	msg.position = Vector2(760, 1000)
@@ -129,7 +132,7 @@ func _center() -> void:
 
 
 func _store() -> void:
-	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate()}
+	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate(), "view3d": view3d}
 
 
 func _refresh_seats() -> void:
@@ -232,7 +235,7 @@ func _config() -> Dictionary:
 	for v in VARIANTS:
 		if variants.get(v[0], false):
 			opts[v[0]] = true
-	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts}
+	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts, "view3d": view3d == 1}
 
 
 func _on_start() -> void:

@@ -14,7 +14,10 @@ var pending: Dictionary = {}
 var local_seats: Array = []
 var _dirty := false
 
-var board: BoardView
+var board                       # vista attiva: BoardView (2D) o Board3D (3D)
+var board2d: BoardView
+var board3d: Board3D
+var view_btn: Button
 var top_lbl: Label
 var phase_lbl: Label
 var status_lbl: Label
@@ -66,9 +69,11 @@ func _ready() -> void:
 	engine.decision_requested.connect(_on_decision)
 	engine.game_ended.connect(_on_end)
 	engine.fx.connect(_on_fx)
-	board.set_engine(engine)
+	board2d.set_engine(engine)
+	board3d.set_engine(engine)
 	_refresh()
-	board.fit.call_deferred()
+	board2d.fit.call_deferred()
+	board3d.fit.call_deferred()
 	if online != null and online.role != "host":
 		online.heartbeat_loop()
 	engine.run.call_deferred()
@@ -84,14 +89,20 @@ func _mark() -> void:
 
 func _build() -> void:
 	add_child(UI.Starfield.new())
-	board = BoardView.new()
-	board.view = self
-	board.position = Vector2(0, 70)
-	board.size = Vector2(1330, 1010)
-	add_child(board)
-	board.area_clicked.connect(_on_area_click)
-	board.piece_clicked.connect(_on_piece_click)
-	board.area_hovered.connect(_on_hover)
+	board2d = BoardView.new()
+	board3d = Board3D.new()
+	for b in [board2d, board3d]:
+		b.view = self
+		b.position = Vector2(0, 70)
+		b.size = Vector2(1330, 1010)
+		add_child(b)
+		b.area_clicked.connect(_on_area_click)
+		b.piece_clicked.connect(_on_piece_click)
+		b.area_hovered.connect(_on_hover)
+	var v3: bool = config.get("view3d", true)
+	board = board3d if v3 else board2d
+	board2d.visible = not v3
+	board3d.visible = v3
 	# barra in alto
 	var top := PanelContainer.new()
 	top.add_theme_stylebox_override("panel", UI.panel_style(Color(UI.SPACE_L, 0.97), UI.INK, 0, 0))
@@ -107,6 +118,9 @@ func _build() -> void:
 	top_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	th.add_child(top_lbl)
+	view_btn = UI.button("Vista 2D" if v3 else "Vista 3D", 140, 46, 19)
+	view_btn.pressed.connect(_toggle_view)
+	th.add_child(view_btn)
 	for b in [["Centra", func(): board.fit()], ["Regole", _show_rules_popup], ["Diario", func(): log_panel.visible = not log_panel.visible], ["Menu", _confirm_menu]]:
 		var btn := UI.button(b[0], 120, 46, 19)
 		btn.pressed.connect(b[1])
@@ -206,6 +220,18 @@ func _build() -> void:
 	add_child(fx_layer)
 
 
+func _toggle_view() -> void:
+	var old = board
+	board = board2d if board == board3d else board3d
+	for k in ["highlight", "selected_area", "sel_pieces", "tags", "crew_tags"]:
+		board.set(k, old.get(k))
+	board2d.visible = board == board2d
+	board3d.visible = board == board3d
+	view_btn.text = "Vista 2D" if board == board3d else "Vista 3D"
+	board.fit()
+	board.refresh()
+
+
 func _arms_refresh() -> void:
 	for c in arms_grid.get_children():
 		c.queue_free()
@@ -294,7 +320,7 @@ func _refresh() -> void:
 	_info(board.hover if board.hover != "" else engine.last_area)
 	if engine.last_area != "" and pending.is_empty():
 		board.selected_area = engine.last_area
-	board.queue_redraw()
+	board.refresh()
 
 
 func _info(a: String) -> void:
@@ -399,7 +425,7 @@ func _show_dice(vals: Array, info: String, tot: int) -> void:
 func _pop_word(a: String, word: String, col: Color) -> void:
 	if not engine.AR.has(a):
 		return
-	var p := board.area_center(a) + board.position
+	var p: Vector2 = board.area_center(a) + board.position
 	_pop_at(p, word, col)
 
 
@@ -548,7 +574,7 @@ func _build_decision() -> void:
 			_build_cmove()
 		"cattack":
 			_build_cattack()
-	board.queue_redraw()
+	board.refresh()
 
 
 # ---- preparazione
@@ -573,7 +599,7 @@ func _build_setup() -> void:
 		ob.item_selected.connect(func(i):
 			setup_sel[cid] = opts[id][i]
 			engine.crew[cid]["loc"] = setup_sel[cid]
-			board.queue_redraw())
+			board.refresh())
 		hb.add_child(ob)
 		dec_box.add_child(hb)
 	_foot_btn("Suggerisci", func():
@@ -750,7 +776,7 @@ func _plan_summary_m() -> void:
 	for c in dice:
 		var p := AGTAI.p_at_least(dice[c], int(engine.cdef(c)["con"]))
 		board.crew_tags[c] = "%dd %d%%" % [dice[c], int(round(p * 100))]
-	board.queue_redraw()
+	board.refresh()
 
 
 # ---- armi
@@ -947,7 +973,7 @@ func _plan_summary_c() -> void:
 		if engine.mon.has(m):
 			parts.append("%s %s: %dd → %d%%" % [board.tags.get(m, "?"), engine.mname(m), kill[m], int(round(AGTAI.p_at_least(kill[m], engine.mcon(m)) * 100))])
 	status_lbl.text = ", ".join(parts)
-	board.queue_redraw()
+	board.refresh()
 
 
 # ================================================================ clic sul tabellone
@@ -985,7 +1011,7 @@ func _on_area_click(a: String) -> void:
 	_info(a)
 	if pending.is_empty():
 		board.selected_area = a
-		board.queue_redraw()
+		board.refresh()
 		return
 	match pending["type"]:
 		"loc":

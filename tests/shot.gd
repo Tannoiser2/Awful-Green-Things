@@ -72,6 +72,13 @@ func _run() -> void:
 		var r = ai.decide(e, req["seat"], req)
 		if not seen.has(k):
 			seen[k] = true
+			if OS.get_environment("AGT_ZOOM") != "" and "board3d" in view and not seen.has("_zoom"):
+				seen["_zoom"] = true
+				view.board3d.dist *= float(OS.get_environment("AGT_ZOOM"))
+				view.board3d.pitch = -42.0
+				view.board3d.yaw = 25.0
+				view.board3d.user_moved = true
+				view.board3d._update_cam()
 			await wait(6)
 			await shot(k)
 			# mostra anche la selezione

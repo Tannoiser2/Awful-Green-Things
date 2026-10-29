@@ -26,12 +26,16 @@ repository è pubblico).
   verso Snudl-1 e punti vittoria.
 - **Varianti** dal menu: un Adulto in più per le Cose Verdi; il Comunicatore a due frequenze; «Cresce» che fa
   deporre le uova (regola TSR).
+- **Vista 3D** (predefinita) con le **miniature stampate in 3D** del modulo (tutto l'equipaggio, 8 Adulti,
+  8 Piccoli, 6 Uova, 3 Frammenti e le 12 armi), colorate come le pedine: basetta crema per l'equipaggio,
+  gialla per le Cose Verdi, blu per le armi. Si passa alla vista 2D del tabellone dal menu o con **Vista 2D/3D**.
 - **Vetrina delle armi** con gli effetti scoperti, **dadi** e **diario di bordo**; onomatopee da fumetto
   (GNAM!, SPLAT!, KABOOM!).
 - **Regole** riassunte in italiano dal menu e in partita.
 
 ## Comandi
-- Rotella per lo zoom, trascina per spostare il tabellone, **Centra** per rifare l'inquadratura.
+- Vista 3D: trascina col sinistro per ruotare, col destro (o Maiusc + sinistro) per spostare, rotella per lo zoom.
+- Vista 2D: rotella per lo zoom, trascina per spostare. **Centra** rifà l'inquadratura.
 - Le aree evidenziate sono quelle che si possono scegliere; passando sopra un'area se ne vede il contenuto.
 - Movimento: tocca una pedina (o un'area) e poi la destinazione in giallo.
 - Attacchi: tocca un'area in rosso, scegli per ognuno arma e bersaglio (le lettere sulle pedine), **Attacca!**.
@@ -57,6 +61,10 @@ le linee di vista e i punti dove appoggiare le pedine sono stati ricavati dal di
 - Portelli e passaggi sono elencati in `tools/genera_aree.py` (PAIRS e OPEN): per correggere un collegamento
   basta modificarli e rilanciare lo script.
 
+## Le miniature
+`tools/miniature.py` converte gli STL di `Awful_green_things.rar` (non nel repository) in `assets/minis/*.glb`:
+semplifica le mesh per la versione web, separa la basetta dalla figura e le colora.
+
 ## Scelte di questa versione (da verificare)
 - Armi: delle tre Zgwortz due stanno in Mensa e una in Cucina; delle tre Taniche due nel Serbatoio n. 1.
 - Le armi da lancio a perdere tornano al deposito più sguarnito; il Coltello lanciato resta nell'area colpita.
@@ -72,7 +80,7 @@ scripts/data/agt_data.gd     equipaggio, mostri, armi, gettoni, tabelle
 scripts/core/engine.gd       motore delle regole (nessuna dipendenza dalla UI)
 scripts/core/ai.gd           IA dell'Equipaggio e delle Cose Verdi
 scripts/net/                 Firebase (REST) e partita online in lockstep
-scripts/ui/                  menu, tabellone (board_view.gd), vista di gioco, regole
+scripts/ui/                  menu, tabellone 2D (board_view.gd) e 3D (board_3d.gd), vista di gioco, regole
 tests/sim.gd                 godot --headless --path . -s tests/sim.gd -- 30 1 1   (partite IA contro IA)
 tests/shot.gd                xvfb-run godot --path . -s res://tests/shot.gd -- crew   (screenshot)
 ```
