@@ -153,22 +153,100 @@ func _scene(n: String) -> PackedScene:
 	return _scenes[n]
 
 
+## Miniature fatte con Meshy (assets/minis_meshy): se c'è il modello si usa quello al posto della
+## miniatura del modulo. Cerca prima il nome esatto (adult_3), poi quello senza variante (adult).
+static var use_meshy := true
+
+
+func _meshy_scene(n: String) -> PackedScene:
+	if not use_meshy:
+		return null
+	for cand in [n, n.rsplit("_", true, 1)[0] if n.rsplit("_", true, 1).size() > 1 and n.rsplit("_", true, 1)[1].is_valid_int() else ""]:
+		if cand == "":
+			continue
+		var key: String = "M|" + cand
+		if not _scenes.has(key):
+			var p := "res://assets/minis_meshy/%s.glb" % cand
+			_scenes[key] = load(p) if ResourceLoader.exists(p) else null
+		if _scenes[key] != null:
+			return _scenes[key]
+	return null
+
+
+## Altezza delle figure Meshy (le loro basette si aggiungono qui, del colore delle pedine).
+func _meshy_height(n: String) -> float:
+	if n.begins_with("crew_"):
+		return 0.62 if not n in ["crew_robot", "crew_mascot"] else 0.5
+	if n.begins_with("adult"):
+		return 0.62
+	if n.begins_with("baby"):
+		return 0.38
+	if n.begins_with("egg"):
+		return 0.3
+	if n.begins_with("fragment"):
+		return 0.2
+	return 0.3
+
+
 func _mini(n: String) -> Node3D:
-	var ps := _scene(n)
 	var holder := Node3D.new()
+	var ms := _meshy_scene(n)
+	if ms != null:
+		var inst: Node3D = ms.instantiate()
+		var bb := _aabb(inst, Transform3D.IDENTITY)
+		var h := maxf(bb.size.y, 0.001)
+		var k := _meshy_height(n) / h
+		inst.scale = Vector3.ONE * k
+		inst.position = Vector3(-(bb.position.x + bb.size.x * 0.5) * k, 0.03 - bb.position.y * k, -(bb.position.z + bb.size.z * 0.5) * k)
+		var body := Node3D.new()
+		body.add_child(inst)
+		holder.add_child(body)
+		# basetta tonda del colore della pedina di cartone
+		var base := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		var r := 0.27 if (n.begins_with("crew_") or n.begins_with("adult")) else 0.2
+		cm.top_radius = r
+		cm.bottom_radius = r
+		cm.height = 0.03
+		base.mesh = cm
+		base.position.y = 0.015
+		var bm := StandardMaterial3D.new()
+		bm.albedo_color = Color("#f4ecd0") if n.begins_with("crew_") else (Color("#1b5f8a") if n.begins_with("w_") else Color("#ffd923"))
+		base.material_override = bm
+		body.add_child(base)
+		return holder
+	var ps := _scene(n)
 	if ps != null:
-		var inst: Node3D = ps.instantiate()
-		inst.scale = Vector3.ONE * MINI_SCALE
-		holder.add_child(inst)
+		var inst2: Node3D = ps.instantiate()
+		inst2.scale = Vector3.ONE * MINI_SCALE
+		holder.add_child(inst2)
 	else:
 		var mi := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.25
-		cm.bottom_radius = 0.25
-		cm.height = 0.1
-		mi.mesh = cm
+		var cm2 := CylinderMesh.new()
+		cm2.top_radius = 0.25
+		cm2.bottom_radius = 0.25
+		cm2.height = 0.1
+		mi.mesh = cm2
 		holder.add_child(mi)
 	return holder
+
+
+func _aabb(n: Node, xf: Transform3D) -> AABB:
+	var out := AABB()
+	var first := true
+	var t := xf
+	if n is Node3D:
+		t = xf * (n as Node3D).transform
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh != null:
+		var b := t * (n as MeshInstance3D).mesh.get_aabb()
+		out = b
+		first = false
+	for c in n.get_children():
+		var cb := _aabb(c, t)
+		if cb.size != Vector3.ZERO:
+			out = cb if first else out.merge(cb)
+			first = false
+	return out
 
 
 func _model_name(kind: String, id: int) -> String:
