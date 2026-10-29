@@ -1,0 +1,7 @@
+# Godot
+.godot/
+*.tmp
+build/
+# sistema
+.DS_Store
+Thumbs.db

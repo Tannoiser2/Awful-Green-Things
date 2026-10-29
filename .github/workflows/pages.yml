@@ -1,0 +1,66 @@
+# Costruisce la versione web del gioco con Godot e la pubblica sulla ludoteca privata (Cloudflare) e,
+# finché il repository è pubblico, anche su GitHub Pages.
+# Non parte da sola: si avvia quando si vuole pubblicare (Actions → Pubblica → Run workflow).
+name: Pubblica
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scarica Godot 4.7 e il modello di esportazione web
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
+          unzip -q Godot_v4.7-stable_linux.x86_64.zip
+          wget -q https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
+          T=~/.local/share/godot/export_templates/4.7.stable
+          mkdir -p $T
+          unzip -q -j Godot_v4.7-stable_export_templates.tpz templates/web_nothreads_release.zip -d $T
+          cp $T/web_nothreads_release.zip $T/web_nothreads_debug.zip
+
+      - name: Esporta la versione web
+        run: |
+          mkdir -p build/web
+          ./Godot_v4.7-stable_linux.x86_64 --headless --path . --import || true
+          ./Godot_v4.7-stable_linux.x86_64 --headless --path . --export-release "Web" build/web/index.html
+          test -f build/web/index.pck
+          touch build/web/.nojekyll
+
+      # Ludoteca privata: con i segreti CLOUDFLARE_API_TOKEN e CLOUDFLARE_ACCOUNT_ID pubblica il gioco su
+      # https://awfulgreen.<dominio>/ protetto da email e codice. Senza segreti non fa nulla.
+      - name: Pubblica su Cloudflare (ludoteca privata)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          LUDOTECA_DOMINIO: ludoteca-digitale.com
+        run: python3 tools/pubblica_cloudflare.py build/web awful-green-things awfulgreen
+
+      # GitHub Pages solo finché il repository è pubblico
+      - uses: actions/upload-pages-artifact@v3
+        if: ${{ !github.event.repository.private }}
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
