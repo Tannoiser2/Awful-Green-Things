@@ -47,10 +47,21 @@ func _run() -> void:
 		main.show_rules()
 		await wait(5)
 		await shot("regole")
+		main.current.page = 1
+		main.current._fill()
+		await wait(5)
+		await shot("regole_opzionali")
 		quit()
 		return
-	var seats := [{"name": "Equipaggio", "ai": mode != "crew", "level": 1}, {"name": "Cose Verdi", "ai": mode != "mon", "level": 1}]
-	main.start_game({"seats": seats, "ai_delay": 0.0, "seed": int(OS.get_environment("AGT_SEED")) if OS.get_environment("AGT_SEED") != "" else 7})
+	var seats := [{"name": "Equipaggio", "ai": mode != "crew" and mode != "solo", "level": 1}, {"name": "Cose Verdi", "ai": mode != "mon", "level": 1}]
+	var o := {}
+	if mode == "solo":
+		o["solo"] = true
+		seats[1]["ai"] = true
+	for k in OS.get_environment("AGT_OPTS").split(",", false):
+		o[k] = true
+	main.start_game({"seats": seats, "ai_delay": 0.0, "opts": o, "view3d": OS.get_environment("AGT_2D") != "1",
+		"seed": int(OS.get_environment("AGT_SEED")) if OS.get_environment("AGT_SEED") != "" else 7})
 	await wait(10)
 	var view = main.current
 	var ai := AGTAI.new(1, 3)

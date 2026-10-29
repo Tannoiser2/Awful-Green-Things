@@ -10,6 +10,7 @@ const VARIANTS := [
 	["extra_adult", "Un Adulto in più per le Cose Verdi", "Il regolamento lo suggerisce per aiutare le Cose Verdi se perdono troppo spesso."],
 	["beamer2", "Comunicatore a due frequenze", "Variante per aiutare l'Equipaggio: se il primo effetto del Raggio comunicatore delude, si può provare\nl'altra frequenza (un nuovo gettone) e poi scegliere ogni volta il migliore dei due."],
 	["grow_eggs", "«Cresce» fa deporre le uova", "Regola delle vecchie edizioni TSR: un Adulto colpito da «Cresce» depone un Uovo.\nNell'8ª edizione no."],
+	["alt_epilogue", "Epilogo alternativo", "Il viaggio di ritorno con 35 eventi e il d10: scialuppe danneggiate, perse o senza scorte,\nalieni, buchi neri, relitti e portali temporali; Pilota, Dottore, Tecnico e gli altri aiutano."],
 ]
 
 var main
@@ -18,6 +19,7 @@ var modes := {"crew": 0, "mon": 2}
 var names := {"crew": "Equipaggio", "mon": "Cose Verdi"}
 var speed := 1
 var view3d := 1
+var scenario := 0                # 0 = classica, 1 = solitario
 var variants := {}
 var msg: Label
 var seats_box: VBoxContainer
@@ -32,6 +34,7 @@ func _ready() -> void:
 		speed = st["speed"]
 		variants = st["variants"].duplicate()
 		view3d = st.get("view3d", 1)
+		scenario = st.get("scenario", 0)
 	page = Control.new()
 	page.size = Vector2(1920, 1080)
 	add_child(page)
@@ -76,7 +79,16 @@ func _ready() -> void:
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 14)
 	right.add_child(rv)
-	rv.add_child(UI.heading("Chi gioca", 40))
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 24)
+	var hh := UI.heading("Chi gioca", 40)
+	hh.custom_minimum_size.x = 250
+	top.add_child(hh)
+	top.add_child(_segmented("Partita", ["Classica", "Solitario"], scenario, func(k):
+		scenario = k
+		msg.text = ""
+		_refresh_seats(), 200))
+	rv.add_child(top)
 	seats_box = VBoxContainer.new()
 	seats_box.add_theme_constant_override("separation", 10)
 	rv.add_child(seats_box)
@@ -139,7 +151,7 @@ func _center() -> void:
 
 
 func _store() -> void:
-	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate(), "view3d": view3d}
+	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate(), "view3d": view3d, "scenario": scenario}
 
 
 func _refresh_seats() -> void:
@@ -147,6 +159,19 @@ func _refresh_seats() -> void:
 		c.queue_free()
 	for i in 2:
 		var k: String = SEAT_KEYS[i]
+		if scenario == 1 and i == 1:
+			var info := PanelContainer.new()
+			info.add_theme_stylebox_override("panel", UI.comic_style(UI.GREEN_D, 12))
+			var ih := HBoxContainer.new()
+			ih.add_theme_constant_override("separation", 14)
+			info.add_child(ih)
+			ih.add_child(UI.icon_rect(UI.mon_tex("A"), Vector2(80, 80)))
+			var il := UI.label("Solitario: il Capitano Yid è rimasto solo. Le Cose Verdi dormono sotto pedine coperte insieme all'equipaggio prigioniero e, una volta sveglie, si muovono da sole: crescono tutte, inseguono il più vicino e attaccano il più debole.", 19, UI.TEXT)
+			il.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			il.custom_minimum_size = Vector2(900, 0)
+			ih.add_child(il)
+			seats_box.add_child(info)
+			continue
 		var col: Color = UI.BLUE_D if i == 0 else UI.GREEN_D
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UI.comic_style(col, 12))
@@ -236,12 +261,17 @@ func _config() -> Dictionary:
 		var nm: String = names[k].strip_edges()
 		if nm == "":
 			nm = SEAT_NAMES[i]
+		if scenario == 1 and i == 1:
+			m = 2
 		seats.append({"name": nm, "ai": m != 0, "level": maxi(0, m - 1)})
 	var speeds := [1.2, 0.6, 0.2, 0.0]
 	var opts := {}
 	for v in VARIANTS:
 		if variants.get(v[0], false):
 			opts[v[0]] = true
+	if scenario == 1:
+		opts["solo"] = true
+		opts.erase("extra_adult")
 	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts, "view3d": view3d == 1}
 
 
@@ -261,6 +291,9 @@ var host_side := 0
 
 
 func _online_panel() -> void:
+	if scenario == 1:
+		msg.text = "Il solitario si gioca solo su questo dispositivo."
+		return
 	if is_instance_valid(on_panel):
 		on_panel.queue_free()
 	on_panel = Control.new()

@@ -25,7 +25,11 @@ repository è pubblico).
   armi da lancio che tornano al deposito, autodistruzione, fuga con le tre scialuppe, **Epilogo** del viaggio
   verso Snudl-1 e punti vittoria.
 - **Varianti** dal menu: un Adulto in più per le Cose Verdi; il Comunicatore a due frequenze; «Cresce» che fa
-  deporre le uova (regola TSR).
+  deporre le uova (regola TSR); l'**Epilogo alternativo** (35 eventi col d10, scialuppe senza scorte, danneggiate
+  o perse, e i bonus dei membri dell'equipaggio).
+- **Solitario** (Solitaire Rules v1.1): il Capitano Yid da solo contro le Cose Verdi in letargo, nascoste sotto
+  pedine coperte insieme all'equipaggio prigioniero; allarme, risveglio spontaneo, carica finale e Cose Verdi
+  che si muovono da sole.
 - **Vista 3D** (predefinita) con le **miniature stampate in 3D** del modulo (tutto l'equipaggio, 8 Adulti,
   8 Piccoli, 6 Uova, 3 Frammenti e le 12 armi), colorate come le pedine: basetta crema per l'equipaggio,
   gialla per le Cose Verdi, blu per le armi. Si passa alla vista 2D del tabellone dal menu o con **Vista 2D/3D**.
@@ -72,7 +76,9 @@ semplifica le mesh per la versione web, separa la basetta dalla figura e le colo
   Frammento. Se le pedine non bastano per far crescere tutti, crescono i primi arrivati.
 - Recinto: se due recinti accesi sono nella stessa area, scaricano una volta sola.
 - L'autodistruzione si avvia con un'azione al posto del movimento (il membro resta fermo e non attacca).
-- Le regole «Fuori dalla Znutar», il solitario e le regole per 3-4 giocatori non ci sono ancora.
+- Solitario: dei 73 mostri del regolamento le pedine del gioco sono 71 (12 Adulti, 18 Piccoli, 19 Uova,
+  22 Frammenti); le pedine avanzate vanno in Sala macchine. Escono l'Estintore dell'Officina di poppa e il
+  Comunicatore del Sensore n. 2. Non c'è la regola facoltativa della fuga col Disco.
 
 ## Struttura
 ```

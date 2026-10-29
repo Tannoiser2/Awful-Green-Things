@@ -25,8 +25,13 @@ func _run(games: int, lc: int, lm: int) -> void:
 		var eng := AGTEngine.new()
 		eng.headless = true
 		root.add_child(eng)
+		var o := {}
+		for k in OS.get_environment("AGT_OPTS").split(",", false):
+			o[k] = true
+		if o.has("solo"):
+			o["solo"] = true
 		eng.setup({"seats": [{"name": "", "ai": true, "level": lc}, {"name": "", "ai": true, "level": lm}],
-			"seed": 1000 + g, "max_turns": 60})
+			"seed": 1000 + g, "max_turns": 150 if o.has("solo") else 60, "opts": o})
 		eng.ais[0] = AGTAI.new(lc, 50 + g * 7)
 		eng.ais[1] = AGTAI.new(lm, 51 + g * 7)
 		eng.changed.connect(_check.bind(eng))

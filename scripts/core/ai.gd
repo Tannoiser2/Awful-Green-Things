@@ -91,7 +91,22 @@ func _pick(e: AGTEngine, req: Dictionary) -> int:
 			return 0 if req.get("boat", "") == "cockboat" else 1
 		"epi14":
 			return 0
+		"alt1", "alt16", "alt27":
+			return 0
+		"alt4":
+			return 2 if _boat_has(e, req, "first_officer") else 0
+		"alt26":
+			return 1 if _boat_has(e, req, "first_officer") else 0
 	return 0
+
+
+func _boat_has(e: AGTEngine, req: Dictionary, k: String) -> bool:
+	for bt in e.boats:
+		if bt["b"] == req.get("boat", ""):
+			for id in bt["crew"]:
+				if e.crew[id]["k"] == k and e.on_board(id) == false:
+					return true
+	return false
 
 
 func _loc(e: AGTEngine, s: int, req: Dictionary) -> String:
@@ -472,6 +487,8 @@ func _doom(e: AGTEngine) -> bool:
 func _cmove(e: AGTEngine, req: Dictionary) -> Dictionary:
 	if req.get("discovery", false):
 		return _discover(e)
+	if e.solo():
+		return _solo_cmove(e)
 	var key := "c%d" % e.turn_no
 	var doom := _doom(e) and e.turn_no > 2
 	if _plan_key != key:
@@ -962,3 +979,170 @@ func _adults(e: AGTEngine, a: String) -> int:
 		if e.mon[id]["l"] == "A":
 			n += 1
 	return n
+
+
+# ================================================================ solitario
+
+var _solo_t := ""
+var _sd := {}
+
+
+## Distanze dall'area t passando solo per aree senza pedine coperte.
+func _safe_dist(e: AGTEngine, t: String) -> Dictionary:
+	var d := {t: 0}
+	var q := [t]
+	while not q.is_empty():
+		var x: String = q.pop_front()
+		for n in e.adj(x):
+			if d.has(n) or e.hidden.has(n):
+				continue
+			d[n] = d[x] + 1
+			q.append(n)
+	return d
+
+
+func _tank(e: AGTEngine, c: int) -> bool:
+	var k: String = e.crew[c]["k"]
+	return k in ["captain", "robot"] or int(e.cdef(c)["con"]) >= 15
+
+
+## Forza dell'equipaggio sveglio: dadi a mani nude più le armi buone.
+func _solo_force(e: AGTEngine) -> float:
+	var f := 0.0
+	for c in e.board_crew():
+		if e.crew[c]["k"] == "mascot":
+			continue
+		f += float(e.cdef(c)["att"])
+		var w: int = e.crew[c]["w"]
+		if w >= 0:
+			var k := e.effect_of(e.wtype(w))
+			if k.begins_with("kill"):
+				f += float(int(k.substr(4))) * (1.5 if D.WEAPONS[e.wtype(w)]["kind"] != "single" else 1.0)
+			elif k == "shrink":
+				f += 5.0
+			elif k == "":
+				f += 1.0
+	return f
+
+
+## L'area coperta da esplorare: poche pedine, vicina, e le stanze che fanno scattare la carica finale per ultime.
+func _solo_target(e: AGTEngine) -> String:
+	var force := _solo_force(e)
+	var cap := 1
+	if force >= 4.0:
+		cap = 2
+	if force >= 7.0:
+		cap = 3
+	if force >= 11.0:
+		cap = 5
+	if force >= 16.0:
+		cap = 99
+	var cs := e.board_crew()
+	if cs.is_empty():
+		return ""
+	var others := 0
+	for a in e.hidden:
+		if not (a in e.SOLO_FINAL):
+			others += 1
+	var best := ""
+	var bv := -99999.0
+	for a in e.hidden:
+		var n: int = (e.hidden[a] as Array).size()
+		var final: bool = a in e.SOLO_FINAL
+		if n > cap and not (final and others == 0 and force >= 10.0):
+			continue
+		var sd := _safe_dist(e, a)
+		var d := 0.0
+		for c in cs:
+			d += float(sd.get(e.crew[c]["loc"], 40))
+		d /= cs.size()
+		var v := -float(n) * 3.0 - d * 1.5
+		if final:
+			v -= 30.0 if others > 0 else 0.0
+		if not e.weapons_at(a).is_empty():
+			v += 2.0
+		v -= _danger(e, a) * 0.5
+		if v > bv:
+			bv = v
+			best = a
+	return best
+
+
+func _solo_cmove(e: AGTEngine) -> Dictionary:
+	var key := "s%d" % e.turn_no
+	if _plan_key != key:
+		_plan_key = key
+		_stay = {}
+		_hunt = _hunt_plan(e) if not e.mon.is_empty() else {}
+		# niente scontri persi in partenza: contro un Adulto da soli si scappa
+		var by_d := {}
+		for c in _hunt:
+			if not by_d.has(_hunt[c]):
+				by_d[_hunt[c]] = []
+			by_d[_hunt[c]].append(c)
+		for d in by_d:
+			var big := 0
+			for m in e.mons_at(d):
+				if e.mon[m]["l"] == "A" and not e.mon[m]["st"]:
+					big += 1
+			if big == 0:
+				continue
+			var dice := 0
+			for c in by_d[d]:
+				dice += int(e.cdef(c)["att"])
+				var w: int = e.crew[c]["w"]
+				if w >= 0 and e.effect_of(e.wtype(w)).begins_with("kill"):
+					dice += int(e.effect_of(e.wtype(w)).substr(4))
+			if p_at_least(dice, 16) < 0.4 * big:
+				for c in by_d[d]:
+					_hunt.erase(c)
+		_solo_t = _solo_target(e)
+		_sd = _safe_dist(e, _solo_t) if _solo_t != "" else {}
+	for c in e.board_crew():
+		for s in e.special_actions(c):
+			if s["act"] == "fence" and _want_fence(e, c):
+				return {"act": "fence", "c": c}
+	var order := e.board_crew()
+	order.sort()
+	var tanks := order.filter(func(x): return _tank(e, x) and e.crew[x]["k"] != "mascot")
+	for c in order:
+		if _stay.has(c) or e.moved.has(c):
+			continue
+		var paths := e.crew_moves(c)
+		if paths.is_empty():
+			_stay[c] = true
+			continue
+		var here: String = e.crew[c]["loc"]
+		var to := ""
+		if _hunt.has(c) and (paths.has(_hunt[c]) or _hunt[c] == here):
+			to = _hunt[c]
+		elif _solo_t == "":
+			to = _crew_dest(e, c, paths, false)
+		else:
+			var enter := _tank(e, c) or tanks.is_empty()
+			var w: int = e.crew[c]["w"]
+			if w >= 0 and D.WEAPONS[e.wtype(w)]["range"] in ["adj", "los"] and e.effect_of(e.wtype(w)) != "":
+				enter = false   # chi ha un'arma a distanza aspetta fuori
+			var cands: Array = paths.keys()
+			cands.append(here)
+			var bv := -9999.0
+			to = here
+			for a in cands:
+				if e.hidden.has(a) and a != _solo_t:
+					continue
+				var d: int = _sd.get(a, 40)
+				var v := -float(d) if enter else -absf(float(d) - 1.0) - (5.0 if a == _solo_t else 0.0)
+				var dng := _danger(e, a)
+				if dng > 0 and e.crew[c]["k"] != "robot":
+					var others := e.crew_at(a).filter(func(x): return x != c).size()
+					v -= p_at_least(int(dng / (1.0 + others * 0.7)), int(e.cdef(c)["con"])) * 8.0
+				if a == here:
+					v += 0.1
+				if v > bv:
+					bv = v
+					to = a
+		if to == "" or to == here:
+			_stay[c] = true
+			continue
+		return {"c": c, "to": to}
+	return {}

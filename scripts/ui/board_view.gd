@@ -136,8 +136,12 @@ func _draw() -> void:
 
 func _draw_area(a: String) -> void:
 	var items := []
+	if e.hidden.has(a):
+		items.append(["h", (e.hidden[a] as Array).size()])
 	for c in e.crew_at(a):
 		items.append(["c", c])
+	for c in e.captives_at(a):
+		items.append(["p", c])
 	var ms := e.mons_at(a)
 	ms.sort_custom(func(x, y): return D.MON_ORDER.find(e.mon[x]["l"]) < D.MON_ORDER.find(e.mon[y]["l"]) or (e.mon[x]["l"] == e.mon[y]["l"] and x < y))
 	var slots: Array = e.AR[a]["slots"]
@@ -175,6 +179,20 @@ func _draw_area(a: String) -> void:
 		if it[0] == "c":
 			_draw_crew(it[1], r)
 			_hits.append([r, "c", it[1]])
+		elif it[0] == "h":
+			var nh: int = it[1]
+			for j in range(mini(nh, 4) - 1, -1, -1):
+				var rr := Rect2(r.position + Vector2(4, -4) * j, r.size)
+				draw_rect(rr.grow(2), UI.INK)
+				draw_rect(rr, Color("#3b4a3f"))
+			draw_string(UI.font_comic, r.position + Vector2(r.size.x * 0.3, r.size.y * 0.78), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, int(r.size.y * 0.7), Color("#9fc48a"))
+			if nh > 1:
+				_badge(r.position + Vector2(r.size.x, r.size.y), "×%d" % nh, UI.CREAM)
+		elif it[0] == "p":
+			draw_rect(r.grow(2), UI.INK)
+			draw_texture_rect(UI.crew_tex(e.crew[it[1]]["k"]), r, false, Color(0.55, 0.75, 0.5))
+			draw_rect(r, Color(0.3, 0.9, 0.2, 0.3))
+			_badge(r.position + Vector2(r.size.x * 0.5, r.size.y * 0.85), "aiuto!", Color("#9be37a"))
 		elif it[0] == "m":
 			_draw_mon(it[1], r)
 			_hits.append([r, "m", it[1]])

@@ -298,7 +298,7 @@ func _refresh() -> void:
 		return
 	var ph := {"crew_setup": "Preparazione", "mon_setup": "Le uova", "discovery": "Scoperta!", "discovery_attack": "Scoperta!",
 		"grow": "Crescita", "mmove": "Le Cose Verdi si muovono", "mattack": "Le Cose Verdi attaccano", "grab": "Prendere le armi",
-		"cmove": "Movimento", "cattack": "Attacco dell'equipaggio", "epilogue": "Epilogo", "fine_partita": "Fine"}
+		"cmove": "Movimento", "alert": "Allarme!", "cattack": "Attacco dell'equipaggio", "epilogue": "Epilogo", "fine_partita": "Fine"}
 	var who := ""
 	if engine.phase in ["grow", "mmove", "mattack", "mon_setup"]:
 		who = engine.pname(1)
@@ -349,6 +349,14 @@ func _info(a: String) -> void:
 	for w in engine.weapons_at(a):
 		wp.append(engine.wname(engine.wtype(w)) + (" (acceso)" if engine.wpn[w]["on"] else ""))
 	var txt := "[b][color=#ffd923]%s[/color][/b]" % engine.area_name(a)
+	var nh: int = (engine.hidden_at(a) as Array).size()
+	if nh > 0:
+		txt += "\n[color=#9fc48a]%d pedin%s copert%s: Cose Verdi addormentate o equipaggio prigioniero.[/color]" % [nh, "a" if nh == 1 else "e", "a" if nh == 1 else "e"]
+	var cap := []
+	for c in engine.captives_at(a):
+		cap.append(engine.cname(c))
+	if not cap.is_empty():
+		txt += "\n[color=#9be37a]Prigionieri nella melma:[/color] " + ", ".join(cap)
 	if not parts.is_empty():
 		txt += "\n[color=#4fb3ff]Equipaggio:[/color] " + ", ".join(parts)
 	if not mp.is_empty():
@@ -397,6 +405,14 @@ func _on_fx(kind: String, data: Dictionary) -> void:
 			_pop_center("AUTODISTRUZIONE!", UI.RED)
 		"explode":
 			_pop_center("KA-BOOOM!", UI.ORANGE)
+		"alert":
+			_pop_word(data["area"], "ALLARME!", UI.ORANGE)
+		"free":
+			_pop_word(data["area"], "LIBERO!", UI.CREAM)
+		"charge_soon":
+			_pop_center("SI SVEGLIANO…", UI.ORANGE)
+		"charge":
+			_pop_center("LA CARICA!", UI.RED)
 		"escape":
 			_pop_word(data["b"], "WHOOSH!", UI.CREAM)
 		"move":

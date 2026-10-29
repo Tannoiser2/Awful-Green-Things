@@ -107,6 +107,8 @@ func setup(config: Dictionary) -> void:
 	for k in D.CHITS:
 		for n in int(D.CHITS[k]["n"]):
 			cup.append(k)
+	if solo():
+		_solo_setup_weapons()
 
 
 func _shuffle(a: Array) -> void:
@@ -302,7 +304,7 @@ func mon_count(l := "") -> int:
 
 
 func avail(l: String) -> int:
-	return int(D.MON[l]["limit"]) - mon_count(l)
+	return int(D.MON[l]["limit"]) - mon_count(l) - (hidden_mon(l) if not hidden.is_empty() else 0)
 
 
 ## Per l'equipaggio un'area è «calda» se ci sono Adulti o Piccoli svegli.
@@ -390,6 +392,8 @@ func reach(from: String, mv: int, for_crew: bool) -> Dictionary:
 
 func _must_stop(a: String, for_crew: bool) -> bool:
 	if fence_at(a):
+		return true
+	if for_crew and hidden.has(a):
 		return true
 	return hot_for_crew(a) if for_crew else blocks_mon(a)
 
@@ -534,6 +538,20 @@ func robot_id() -> int:
 # ================================================================ svolgimento
 
 func run() -> void:
+	if solo():
+		_setup_solo()
+		while not game_over and not abort:
+			turn_no += 1
+			if max_turns > 0 and turn_no > max_turns:
+				_end_timeout()
+				break
+			await _crew_turn()
+			if game_over or abort:
+				break
+			await _solo_monster_turn()
+		if not abort:
+			_finish()
+		return
 	log_msg("La Znutar vaga nello spazio profondo… qualcosa di verde si muove nella stiva.")
 	await _setup_crew()
 	if abort:
@@ -886,20 +904,15 @@ func _crew_dies(cid: int) -> void:
 ## Uno dei mostri che hanno ucciso divora il corpo e cresce di un livello (un Adulto depone un Uovo).
 func _eat(ms: Array) -> void:
 	var best := -1
-	for mid in ms:
-		if mon[mid]["l"] == "B" and avail("A") > 0:
-			best = mid
+	# di norma cresce un Piccolo; nel solitario mangia il più grosso che può crescere
+	var pref := [["A", "E"], ["B", "A"], ["F", "B"]] if solo() else [["B", "A"], ["A", "E"], ["F", "B"]]
+	for p in pref:
+		for mid in ms:
+			if mon[mid]["l"] == p[0] and avail(p[1]) > 0:
+				best = mid
+				break
+		if best >= 0:
 			break
-	if best < 0:
-		for mid in ms:
-			if mon[mid]["l"] == "A" and avail("E") > 0:
-				best = mid
-				break
-	if best < 0:
-		for mid in ms:
-			if mon[mid]["l"] == "F" and avail("B") > 0:
-				best = mid
-				break
 	if best < 0:
 		return
 	match mon[best]["l"]:
@@ -949,6 +962,10 @@ func _crew_turn() -> void:
 	await _crew_moves(99)
 	if game_over or abort:
 		return
+	if solo():
+		await _solo_alert()
+		if game_over or abort:
+			return
 	# 3. attacco
 	phase = "cattack"
 	await _crew_attacks()
@@ -984,6 +1001,9 @@ func _crew_turn() -> void:
 	moved = {}
 	hot_entry = {}
 	attacked = {}
+	if solo():
+		_solo_free()
+		_solo_end_of_turn()
 	_check_end()
 	changed.emit()
 
@@ -1108,6 +1128,8 @@ func special_actions(cid: int) -> Array:
 	var w: int = crew[cid]["w"]
 	if w >= 0 and wtype(w) == "fence":
 		out.append({"act": "fence", "c": cid, "label": "Monta il Recinto qui"})
+	if solo():
+		return out
 	if crew[cid]["k"] in D.SD_CREW and a in D.BRIDGES and sd_left < 0 and not "sd" in busy.values():
 		out.append({"act": "sd", "c": cid, "label": "Avvia l'autodistruzione"})
 	if D.BOATS.has(a) and not launched.has(a):
@@ -1508,6 +1530,365 @@ func _apply_cattack(r: Dictionary) -> void:
 	changed.emit()
 
 
+# ================================================================ solitario (Capitano Yid)
+## Regole di Solitaire Rules v1.1: il Capitano torna sulla Znutar e trova tutti addormentati.
+## In ogni area ci sono pedine coperte (Cose Verdi in letargo o membri dell'equipaggio prigionieri):
+## si scoprono entrando. Le Cose Verdi si muovono da sole con regole fisse.
+
+const SOLO_FINAL := ["dc", "bridge1", "bridge2", "mshop", "aft_ms", "engine"]
+
+var hidden := {}          # area -> [{"c": id} | {"l": livello}, "seen": bool]
+var final_charge := -1    # turno dell'equipaggio alla fine del quale si sveglia tutto
+var _woke := false        # in questo turno l'equipaggio ha svegliato qualcosa
+
+
+func solo() -> bool:
+	return opts.get("solo", false)
+
+
+func hidden_at(a: String) -> Array:
+	return hidden.get(a, [])
+
+
+func hidden_mon(l: String) -> int:
+	var n := 0
+	for a in hidden:
+		for t in hidden[a]:
+			if t.get("l", "") == l:
+				n += 1
+	return n
+
+
+func captives_at(a: String) -> Array:
+	var out := []
+	for id in crew:
+		if crew[id]["state"] == "captive" and crew[id]["loc"] == a:
+			out.append(id)
+	return out
+
+
+func _setup_solo() -> void:
+	phase = "crew_setup"
+	var cap := -1
+	var toks := []
+	for id in crew:
+		if crew[id]["k"] == "captain":
+			cap = id
+		else:
+			toks.append({"c": id})
+			crew[id]["state"] = "hidden"
+	for l in ["A", "B", "E", "F"]:
+		for i in int(D.MON[l]["limit"]):
+			toks.append({"l": l})
+	_shuffle(toks)
+	var plan := {}
+	var waeps := {}
+	for w in wpn:
+		waeps[wpn[w]["loc"]] = true
+	for a in D.area_list():
+		if D.BOATS.has(a):
+			continue
+		var n := 1
+		if waeps.has(a):
+			n += 2
+		if a in ["dc", "mshop", "aft_ms"]:
+			n += 2
+		if a in D.BRIDGES:
+			n += 4
+		plan[a] = n
+	for a in plan:
+		hidden[a] = []
+		for i in plan[a]:
+			if toks.is_empty():
+				break
+			hidden[a].append(toks.pop_back())
+	while not toks.is_empty():
+		hidden["engine"].append(toks.pop_back())
+	for a in hidden:
+		for t in hidden[a]:
+			t["seen"] = false
+			if t.has("c"):
+				crew[int(t["c"])]["loc"] = a
+	crew[cap]["loc"] = "saucer"
+	log_msg("Il Capitano Yid atterra con il Disco: nessuno risponde. Le Cose Verdi dormono, e l'equipaggio è la loro dispensa.")
+	log_msg("Ogni area nasconde pedine coperte: entrando si scopre chi c'è. Attenti al Ponte, all'Officina e alla Sala macchine…")
+	changed.emit()
+
+
+func _solo_setup_weapons() -> void:
+	# un Estintore e un Comunicatore escono dal gioco; via il gettone «5 dadi per uccidere»
+	for w in wpn.keys():
+		if (wpn[w]["t"] == "extinguisher" and wpn[w]["loc"] == "aft_ms") or (wpn[w]["t"] == "beamer" and wpn[w]["loc"] == "sensor2"):
+			wpn.erase(w)
+	cup.erase("kill5")
+	opts["grow_eggs"] = true
+
+
+## Fase di allarme: si scoprono le pedine nelle aree dove c'è l'equipaggio.
+func _solo_alert() -> void:
+	phase = "alert"
+	var areas := []
+	for cid in board_crew():
+		var a: String = crew[cid]["loc"]
+		if not hidden_at(a).is_empty() and not areas.has(a):
+			areas.append(a)
+	areas.sort()
+	for a in areas:
+		_woke = true
+		var toks: Array = hidden[a]
+		hidden.erase(a)
+		var new_m := []
+		var found := []
+		for t in toks:
+			if t.has("l"):
+				new_m.append(_add_mon(str(t["l"]), a))
+			else:
+				found.append(int(t["c"]))
+		var parts := []
+		for l in D.MON_ORDER:
+			var k := new_m.filter(func(m): return mon[m]["l"] == l).size()
+			if k > 0:
+				parts.append("%d %s" % [k, D.MON[l]["plural"] if k > 1 else D.MON[l]["name"]])
+		for c in found:
+			parts.append(cname(c))
+		log_msg("Allarme in %s! Sotto le pedine: %s." % [area_name(a), ", ".join(parts)])
+		for c in found:
+			crew[c]["state"] = "captive"
+		last_area = a
+		_fx("alert", {"area": a})
+		changed.emit()
+		if a in SOLO_FINAL and final_charge < 0:
+			final_charge = turn_no + 1
+			log_msg("Il rumore arriva fino agli altri! Alla fine del prossimo turno dell'equipaggio si sveglieranno tutte le Cose Verdi.")
+			_fx("charge_soon", {})
+		# le Cose Verdi appena svegliate attaccano subito
+		if not new_m.is_empty():
+			_solo_mattack(a, new_m)
+			_check_end()
+			if game_over:
+				return
+		_solo_free()
+	changed.emit()
+
+
+## I prigionieri si liberano quando nella loro area c'è l'equipaggio e non ci sono più Cose Verdi.
+func _solo_free() -> void:
+	for id in crew:
+		if crew[id]["state"] != "captive":
+			continue
+		var a: String = crew[id]["loc"]
+		if mons_at(a).is_empty() and not crew_at(a).is_empty():
+			crew[id]["state"] = "ok"
+			crew[id]["st"] = 0
+			moved[id] = true
+			log_msg("%s è libero e si unisce al Capitano!" % cname(id))
+			_fx("free", {"c": id, "area": a})
+	changed.emit()
+
+
+## Attacco automatico: tutti insieme sul più debole dell'area (il Robot per primo).
+func _solo_mattack(a: String, only := []) -> void:
+	var ms := []
+	for m in mons_at(a):
+		if (only.is_empty() or only.has(m)) and not mon[m]["st"] and matt(m) > 0 and not attacked.has(m):
+			ms.append(m)
+	var cs := crew_at(a)
+	if ms.is_empty() or cs.is_empty():
+		return
+	var rob := robot_id()
+	var target := -1
+	if cs.has(rob):
+		target = rob
+	else:
+		var best := []
+		var bk := 99999
+		for c in cs:
+			var k := int(cdef(c)["con"]) * 10 + int(cdef(c)["att"])
+			if k < bk:
+				bk = k
+				best = [c]
+			elif k == bk:
+				best.append(c)
+		target = best[rng.randi_range(0, best.size() - 1)]
+	# chi mangia: il livello più alto che può crescere
+	var eater := -1
+	for want in [["A", "E"], ["B", "A"], ["F", "B"]]:
+		for m in ms:
+			if mon[m]["l"] == want[0] and avail(want[1]) > 0:
+				eater = m
+				break
+		if eater >= 0:
+			break
+	if eater >= 0:
+		ms.erase(eater)
+		ms.push_front(eater)
+	_apply_mattack({"area": a, "atk": [[ms, target]]})
+
+
+func _solo_monster_turn() -> void:
+	moved = {}
+	attacked = {}
+	if mon.is_empty():
+		return
+	log_msg("— Turno %d: le Cose Verdi —" % turn_no)
+	# 1. crescita: tutte, a cominciare dalle più vicine all'equipaggio
+	phase = "grow"
+	var ids := mon.keys().filter(func(m): return not mon[m]["st"])
+	ids.sort_custom(func(x, y): return _near_crew(mon[x]["loc"]) < _near_crew(mon[y]["loc"]) or (_near_crew(mon[x]["loc"]) == _near_crew(mon[y]["loc"]) and x < y))
+	var cnt := {"A": 0, "B": 0, "E": 0, "F": 0}
+	for m in ids:
+		match mon[m]["l"]:
+			"A":
+				if avail("E") > 0:
+					_add_mon("E", mon[m]["loc"])
+					cnt["A"] += 1
+			"B":
+				if avail("A") > 0:
+					mon[m]["l"] = "A"
+					cnt["B"] += 1
+			"E", "F":
+				if avail("B") > 0:
+					cnt[mon[m]["l"]] += 1
+					mon[m]["l"] = "B"
+	var gp := []
+	if cnt["A"] > 0:
+		gp.append("%d Uova deposte" % cnt["A"])
+	if cnt["B"] > 0:
+		gp.append("%d Piccoli diventano Adulti" % cnt["B"])
+	if cnt["E"] > 0:
+		gp.append("%d Uova si schiudono" % cnt["E"])
+	if cnt["F"] > 0:
+		gp.append("%d Frammenti diventano Piccoli" % cnt["F"])
+	log_msg("Crescita frenetica: " + (", ".join(gp) if not gp.is_empty() else "niente può crescere") + ".")
+	_fx("grow", {"l": "A", "n": cnt["A"] + cnt["B"] + cnt["E"] + cnt["F"]})
+	changed.emit()
+	# 2. movimento verso l'equipaggio più vicino
+	phase = "mmove"
+	var order := mon.keys()
+	order.sort()
+	for m in order:
+		if not mon.has(m) or not mon_mobile(m):
+			continue
+		var to := _solo_dest(m)
+		if to != "" and to != mon[m]["loc"]:
+			_apply_mmove({"ids": [m], "to": to})
+		moved[m] = true
+	_fences()
+	_check_end()
+	if game_over:
+		return
+	# 3. attacco
+	phase = "mattack"
+	var areas := mon_attack_areas()
+	areas.sort()
+	for a in areas:
+		_solo_mattack(a)
+		for m in mons_at(a):
+			attacked[m] = true
+		_check_end()
+		if game_over:
+			return
+	_solo_free()
+	for id in mon:
+		mon[id]["st"] = false
+	moved = {}
+	attacked = {}
+	changed.emit()
+
+
+func _near_crew(a: String) -> int:
+	var d := 99
+	for c in board_crew():
+		d = mini(d, dist(a, crew[c]["loc"]))
+	return d
+
+
+## Destinazione di una Cosa Verde: verso il membro dell'equipaggio più vicino (a pari distanza il più debole).
+func _solo_dest(m: int) -> String:
+	var here: String = mon[m]["loc"]
+	if not crew_at(here).is_empty():
+		return here
+	var bd := 99
+	var targets := []
+	for c in board_crew():
+		var d := dist(here, crew[c]["loc"])
+		var k := int(cdef(c)["con"]) * 10 + int(cdef(c)["att"])
+		if d < bd:
+			bd = d
+			targets = [[k, crew[c]["loc"]]]
+		elif d == bd:
+			targets.append([k, crew[c]["loc"]])
+	if targets.is_empty():
+		return here
+	targets.sort_custom(func(x, y): return x[0] < y[0])
+	var goal: String = targets[0][1]
+	var paths := reach(here, int(D.MON[mon[m]["l"]]["mov"]), false)
+	var best := []
+	var bdist := dist(here, goal)
+	for a in paths:
+		var d := dist(a, goal)
+		if d < bdist:
+			bdist = d
+			best = [a]
+		elif d == bdist and not best.is_empty():
+			best.append(a)
+	if best.is_empty():
+		return here
+	best.sort()
+	return best[rng.randi_range(0, best.size() - 1)]
+
+
+## Fine del turno dell'equipaggio: risveglio spontaneo e carica finale.
+func _solo_end_of_turn() -> void:
+	if final_charge > 0 and turn_no >= final_charge:
+		final_charge = 0
+		var n := 0
+		for a in hidden.keys():
+			for t in hidden[a]:
+				if t.has("l"):
+					_add_mon(str(t["l"]), a)
+					n += 1
+				else:
+					crew[int(t["c"])]["state"] = "captive"
+			hidden.erase(a)
+		log_msg("LA CARICA FINALE! Tutta la Znutar si sveglia: %d Cose Verdi affamate escono dal letargo." % n)
+		_fx("charge", {})
+		_solo_free()
+		changed.emit()
+		return
+	if _woke:
+		_woke = false
+		return
+	# nessuno svegliato: si sveglia da sola la pedina più lontana dall'equipaggio
+	var best_a := ""
+	var bd := -1
+	var bn := 0
+	for a in hidden:
+		var free: Array = hidden[a].filter(func(t): return not t["seen"])
+		if free.is_empty():
+			continue
+		var d := _near_crew(a)
+		if d > bd or (d == bd and hidden[a].size() > bn):
+			bd = d
+			bn = hidden[a].size()
+			best_a = a
+	if best_a == "":
+		return
+	var free2: Array = hidden[best_a].filter(func(t): return not t["seen"])
+	var t: Dictionary = free2[rng.randi_range(0, free2.size() - 1)]
+	if t.has("c"):
+		t["seen"] = true
+		log_msg("Qualcosa si muove in %s… ma è solo %s, ancora prigioniero nella melma." % [area_name(best_a), cname(int(t["c"]))])
+	else:
+		hidden[best_a].erase(t)
+		if hidden[best_a].is_empty():
+			hidden.erase(best_a)
+		_add_mon(str(t["l"]), best_a)
+		log_msg("In %s una Cosa Verde si sveglia da sola: %s!" % [area_name(best_a), D.MON[t["l"]]["name"]])
+		last_area = best_a
+	changed.emit()
+
+
 # ================================================================ fine partita
 
 func _explode() -> void:
@@ -1522,6 +1903,19 @@ func _explode() -> void:
 
 func _check_end() -> void:
 	if game_over:
+		return
+	if mon.is_empty() and solo() and (hidden_mon("A") + hidden_mon("B") + hidden_mon("E") + hidden_mon("F")) == 0:
+		var pts := 0.0
+		for cid in crew:
+			if crew[cid]["state"] in ["ok", "captive", "hidden"] and not (crew[cid]["k"] in ["robot", "mascot"]):
+				pts += float(cdef(cid)["con"])
+		vp = [pts, 0.0]
+		_end("crew", "Il Capitano Yid ha liberato la Znutar: tutte le Cose Verdi sono state sterminate!")
+		return
+	if solo():
+		if board_crew().is_empty():
+			vp = [0.0, D.VP_TAKEOVER]
+			_end("mon", "Nessuno è rimasto sveglio: le Cose Verdi tornano a dormire con la dispensa piena.")
 		return
 	if mon.is_empty():
 		var pts := 0.0
@@ -1677,6 +2071,315 @@ func _epilogue_boat(bt: Dictionary) -> void:
 	bt["fate"] = "home" if not people.is_empty() else "lost"
 
 
+# ---------------------------------------------------------------- epilogo alternativo (variante)
+
+func d10() -> int:
+	return rng.randi_range(1, 10)
+
+
+func _has_k(people: Array, k: String) -> bool:
+	for id in people:
+		if crew[id]["k"] == k:
+			return true
+	return false
+
+
+## Tabella a d10: [[massimo, passo], ...] → il passo del primo massimo che contiene il tiro.
+static func _tab(r: int, t: Array) -> int:
+	for e in t:
+		if r <= int(e[0]):
+			return int(e[1])
+	return int(t[t.size() - 1][1])
+
+
+## Epilogo alternativo (35 eventi, d10, stato della scialuppa e bonus dei membri dell'equipaggio).
+func _epilogue_alt(bt: Dictionary) -> void:
+	var people: Array = bt["crew"].duplicate()
+	var bn: String = String(D.BOATS[bt["b"]]["name"]).capitalize()
+	var weapons := []
+	for w in wpn:
+		if wpn[w]["loc"] == bt["b"] and int(wpn[w]["c"]) == -1:
+			weapons.append(wpn[w]["t"])
+	log_msg("Epilogo alternativo: il viaggio %s." % D.BOATS[bt["b"]]["of"])
+	var low := false
+	var damaged := false
+	var lost := false
+	var low_years := 0
+	var years := 0
+	var attacked := false
+	var intelligent := false
+	var fate := "lost"
+	var step := 1
+	var guard := 0
+	var x := {"boat": bt["b"]}
+	while guard < 120 and not abort:
+		guard += 1
+		var r := 0
+		var yrs := 0
+		var set_low := false
+		match step:
+			1:
+				var c := await pick(CREW_SEAT, "alt1", "%s: che rotta?" % bn,
+					["Dritti verso Snudl-1", "Verso l'ultimo pianeta visitato", "Verso un sistema inesplorato vicino"], x)
+				step = [33, 19, 30][clampi(c, 0, 2)]
+			2:
+				yrs = 1
+				r = d10()
+				log_msg("   Un anno nello spazio (%d)." % r)
+				step = _tab(r, [[3, 21], [7, 34], [10, 3]])
+			3:
+				r = d10()
+				log_msg("   Atterraggio su un pianeta abitabile (%d)." % r)
+				step = _tab(r, [[3, 4], [6, 22], [10, 6]])
+			4, 22:
+				if step == 4:
+					intelligent = false
+					log_msg("   Alieni ostili!")
+				else:
+					intelligent = true
+					log_msg("   Segni di vita intelligente!")
+				var c2 := await pick(CREW_SEAT, "alt4", "%s: %s Che fare?" % [bn, "alieni ostili!" if step == 4 else "vita intelligente!"],
+					["Evitare il contatto", "Attaccare", "Tentare di comunicare"], x)
+				step = [35, 5, 24][clampi(c2, 0, 2)]
+			5:
+				attacked = true
+				var n := d6()
+				var mine := 0
+				for id in people:
+					mine += int(cdef(id)["att"])
+				var a := total(roll(mine))
+				var bonus := ""
+				if weapons.has("pistol") or weapons.has("fuel") or weapons.has("grenade"):
+					var ks: Array = D.CHITS.keys()
+					var ch: String = ks[rng.randi_range(0, ks.size() - 1)]
+					if ch.begins_with("kill"):
+						var kd := int(ch.substr(4))
+						a += total(roll(kd))
+						bonus = " (armi: +%d dadi)" % kd
+				var b := 0
+				for i in n:
+					b += d10() if intelligent else d6()
+				log_msg("   Battaglia con %d alieni: equipaggio %d%s, alieni %d." % [n, a, bonus, b])
+				if a > b:
+					step = 6
+				else:
+					var v: int = people[rng.randi_range(0, people.size() - 1)]
+					people.erase(v)
+					log_msg("   %s cade in battaglia." % cname(v))
+					step = 4
+			6:
+				low = false
+				low_years = 0
+				r = d10()
+				log_msg("   Viveri e carburante riforniti (%d)." % r)
+				step = _tab(r, [[2, 2], [4, 7], [7, 32], [10, 14]])
+			7:
+				yrs = 2
+				r = d10()
+				log_msg("   Due anni nello spazio (%d)." % r)
+				step = _tab(r, [[2, 10], [4, 13], [8, 34], [10, 3]])
+			8:
+				lost = true
+				r = d10() + (1 if _has_k(people, "pilot_y") or _has_k(people, "pilot_b") else 0)
+				log_msg("   Persi nello spazio (%d)." % r)
+				step = _tab(r, [[1, 9], [2, 21], [3, 10], [4, 2], [5, 7], [7, 32], [11, 14]])
+			9:
+				r = d10() - (1 if damaged else 0) + (1 if _has_k(people, "pilot_y") or _has_k(people, "pilot_b") else 0) \
+					+ (2 if _has_k(people, "captain") else 0)
+				log_msg("   Vicino a un buco nero (%d)." % r)
+				step = _tab(r, [[3, 11], [6, 20], [7, 2], [8, 7], [9, 32], [13, 14]])
+			10:
+				r = d10()
+				log_msg("   Attraverso una nube cosmica (%d)." % r)
+				step = _tab(r, [[2, 15], [4, 8], [6, 2], [8, 32], [10, 14]])
+			11:
+				log_msg("   %s scompare nel nulla. Nessuno tornerà." % bn)
+				people = []
+				break
+			12:
+				log_msg("   %s raggiunge Snudl-1 dopo %d anni!" % [bn, years])
+				fate = "home"
+				break
+			13:
+				r = d10()
+				log_msg("   Atterraggio su uno strano planetoide (%d)." % r)
+				step = _tab(r, [[3, 23], [5, 15], [7, 4], [9, 22], [10, 6]])
+			14:
+				yrs = 4
+				set_low = true
+				r = d10() - (1 if lost else 0)
+				log_msg("   Quattro anni nello spazio: le scorte scarseggiano (%d)." % r)
+				step = _tab(r, [[2, 9], [3, 8], [4, 34], [5, 3], [6, 16], [10, 12]])
+			15:
+				var nd := 3 if _has_k(people, "doc") else 4
+				var md := 1 if _has_k(people, "medic") else 0
+				log_msg("   Una strana malattia colpisce l'equipaggio (%d dadi per uccidere%s)." % [nd, ", -1 con l'Infermiere" if md > 0 else ""])
+				for id in people.duplicate():
+					if crew[id]["k"] == "robot":
+						continue
+					var t := total(roll(nd)) - md
+					if t >= int(cdef(id)["con"]):
+						people.erase(id)
+						log_msg("   %s muore (%d)." % [cname(id), t])
+				r = d10()
+				step = _tab(r, [[1, 2], [3, 7], [6, 32], [10, 14]])
+			16:
+				var c3 := await pick(CREW_SEAT, "alt16", "%s: un relitto alieno alla deriva!" % bn, ["Passare oltre", "Abbordarlo"], x)
+				step = 30 if c3 == 0 else 25
+			17:
+				r = d10() + (1 if _has_k(people, "eng_officer") else 0) + (2 if _has_k(people, "engineer") else 0)
+				log_msg("   Atterraggio per le riparazioni (%d)." % r)
+				if r <= 4:
+					step = 18
+				elif r <= 6:
+					yrs = 2
+					damaged = false
+					log_msg("   Due anni di lavoro: la scialuppa è riparata.")
+					step = 30
+				else:
+					yrs = 1
+					damaged = false
+					log_msg("   Un anno di lavoro: la scialuppa è riparata.")
+					step = 6
+			18:
+				r = d10()
+				if r <= 5:
+					log_msg("   Irreparabile: l'equipaggio resta naufrago su un pianeta abitabile (%d). Metà dei punti." % r)
+					fate = "marooned"
+				else:
+					log_msg("   Irreparabile: l'equipaggio naufraga e perisce (%d)." % r)
+					people = []
+				break
+			19:
+				yrs = 1
+				r = d10()
+				log_msg("   Un anno di viaggio verso l'ultimo pianeta visitato (%d)." % r)
+				step = _tab(r, [[3, 2], [5, 7], [10, 3]])
+			20:
+				damaged = true
+				r = d10()
+				log_msg("   La scialuppa è danneggiata (%d)." % r)
+				step = _tab(r, [[6, 17], [7, 2], [8, 7], [9, 32], [10, 14]])
+			21:
+				r = d10()
+				log_msg("   Tempesta ionica (%d)." % r)
+				step = _tab(r, [[2, 20], [4, 8], [6, 7], [8, 32], [10, 14]])
+			23:
+				r = d10() + (2 if _has_k(people, "first_officer") else 0)
+				log_msg("   Il planetoide è fatto di materia oscura quantizzata negativamente (%d)." % r)
+				if r <= 8:
+					log_msg("   Esplosione! La scialuppa è scagliata nello spazio.")
+					step = 20
+				else:
+					step = 22
+			24:
+				r = d10() - (1 if attacked else 0) + (1 if _has_k(people, "first_officer") else 0)
+				log_msg("   Si tenta di comunicare con gli alieni (%d)." % r)
+				if r <= 2:
+					step = 29
+				elif r <= 6:
+					log_msg("   Gli alieni respingono l'equipaggio e lo cacciano dal pianeta.")
+					step = 30
+				else:
+					log_msg("   Gli alieni sono amichevoli: riparazioni e provviste!")
+					damaged = false
+					step = 6
+			25:
+				r = d10() + (1 if _has_k(people, "sparks") else 0)
+				log_msg("   Il relitto ha difese automatiche (%d)." % r)
+				if r <= 3:
+					log_msg("   Raggi warp tetra-osmici!")
+					step = 11
+				elif r <= 6:
+					log_msg("   Missili a ricerca!")
+					step = 20
+				else:
+					step = 26
+			26:
+				var c4 := await pick(CREW_SEAT, "alt26", "%s: i computer del relitto sono stranamente alieni." % bn,
+					["Andarsene", "Provare a usarli"], x)
+				step = 30 if c4 == 0 else 28
+			27:
+				var c5 := await pick(CREW_SEAT, "alt27", "%s: un antico portale temporale!" % bn, ["Volare via", "Attivare il portale"], x)
+				step = 7 if c5 == 0 else 31
+			28:
+				r = d10() + (1 if _has_k(people, "technician") else 0) + (2 if _has_k(people, "first_officer") else 0)
+				log_msg("   I computer del relitto funzionano ancora (%d)." % r)
+				if r <= 3:
+					log_msg("   I motori del relitto esplodono: nessun superstite.")
+					people = []
+					break
+				log_msg("   L'equipaggio pilota il relitto fino a Snudl-1.")
+				step = 12
+			29:
+				r = d10()
+				log_msg("   Gli alieni sono malvagie capre spaziali di antimateria (%d)!" % r)
+				if r <= 5:
+					step = 20
+				else:
+					log_msg("   La scialuppa è distrutta.")
+					people = []
+					break
+			30:
+				yrs = 1
+				r = d10()
+				log_msg("   Un anno nello spazio (%d)." % r)
+				step = _tab(r, [[3, 2], [5, 7], [7, 13], [9, 34], [10, 3]])
+			31:
+				r = d10() + (1 if _has_k(people, "first_officer") else 0)
+				log_msg("   Il portale temporale si accende (%d)." % r)
+				if r <= 3:
+					log_msg("   L'equipaggio resta intrappolato nel tempo.")
+					people = []
+					break
+				elif r <= 6:
+					log_msg("   I circuiti del portale vanno in corto.")
+					step = 32
+				else:
+					step = 12
+			32:
+				yrs = 3
+				r = d10() - (1 if lost else 0)
+				log_msg("   Tre anni nello spazio (%d)." % r)
+				step = _tab(r, [[2, 8], [3, 13], [5, 34], [7, 3], [10, 12]])
+			33:
+				yrs = 2
+				r = d10()
+				log_msg("   Due anni dritti verso Snudl-1 (%d)." % r)
+				step = _tab(r, [[6, 7], [10, 32]])
+			34:
+				r = d10()
+				log_msg("   Atterraggio su un pianeta desolato (%d)." % r)
+				step = _tab(r, [[5, 4], [7, 22], [8, 27], [10, 6]])
+			35:
+				r = d10()
+				log_msg("   L'equipaggio evita il contatto (%d)." % r)
+				step = _tab(r, [[2, 2], [4, 7], [7, 32], [10, 14]])
+		if yrs > 0:
+			years += yrs
+			if low:
+				low_years += yrs
+				if low_years > 10:
+					log_msg("   Le scorte sono finite: l'equipaggio muore di fame.")
+					people = []
+					break
+		if set_low and not low:
+			low = true
+			low_years = 0
+			log_msg("   Le scorte basteranno ancora dieci anni.")
+		if _no_humans(people):
+			people = []
+			break
+	if guard >= 120:
+		log_msg("   Il viaggio non finisce mai… nessuno torna a casa.")
+		people = []
+	if fate == "lost" or people.is_empty():
+		people = []
+		fate = "lost"
+	bt["survivors"] = people
+	bt["fate"] = fate
+
+
 func _no_humans(people: Array) -> bool:
 	for id in people:
 		if not (crew[id]["k"] in ["robot", "mascot"]):
@@ -1693,10 +2396,14 @@ func _finish() -> void:
 		changed.emit()
 		var home := 0.0
 		for bt in boats:
-			await _epilogue_boat(bt)
+			if opts.get("alt_epilogue", false):
+				await _epilogue_alt(bt)
+			else:
+				await _epilogue_boat(bt)
+			var mult := 0.5 if bt["fate"] == "marooned" else 1.0
 			for id in bt["survivors"]:
 				if not (crew[id]["k"] in ["robot", "mascot"]):
-					home += float(cdef(id)["con"])
+					home += float(cdef(id)["con"]) * mult
 		match kind:
 			"exterminated":
 				vp = [float(_pending_end["aboard"]) + home, D.VP_TAKEOVER if not boats.is_empty() else 0.0]

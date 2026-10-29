@@ -232,6 +232,49 @@ func _mini(n: String) -> Node3D:
 	return holder
 
 
+## Pila di pedine coperte (solitario): dischetti scuri con un punto interrogativo.
+func _hidden_stack() -> Node3D:
+	var holder := Node3D.new()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color("#3b4a3f")
+	var top := StandardMaterial3D.new()
+	top.albedo_color = Color("#6f8f5a")
+	for i in 12:
+		var mi := MeshInstance3D.new()
+		mi.name = "d%d" % i
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.26
+		cm.bottom_radius = 0.26
+		cm.height = 0.045
+		mi.mesh = cm
+		mi.material_override = mat
+		mi.position = Vector3(randf_range(-0.02, 0.02), 0.0225 + i * 0.05, randf_range(-0.02, 0.02))
+		holder.add_child(mi)
+	var l := Label3D.new()
+	l.name = "conta"
+	l.font = UI.font_comic
+	l.font_size = 72
+	l.pixel_size = 0.004
+	l.modulate = UI.CREAM
+	l.outline_modulate = UI.INK
+	l.outline_size = 14
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	holder.add_child(l)
+	return holder
+
+
+func _hidden_count(node: Node3D, n: int) -> void:
+	for i in 12:
+		var d := node.get_node_or_null("d%d" % i)
+		if d != null:
+			d.visible = i < mini(n, 12)
+	var l: Label3D = node.get_node_or_null("conta")
+	if l != null:
+		l.text = "?" if n <= 1 else "?×%d" % n
+		l.position.y = 0.2 + mini(n, 12) * 0.05
+
+
 func _aabb(n: Node, xf: Transform3D) -> AABB:
 	var out := AABB()
 	var first := true
@@ -250,7 +293,7 @@ func _aabb(n: Node, xf: Transform3D) -> AABB:
 	return out
 
 
-func _model_name(kind: String, id: int) -> String:
+func _model_name(kind: String, id) -> String:
 	match kind:
 		"c":
 			return "crew_" + e.crew[id]["k"]
@@ -259,6 +302,10 @@ func _model_name(kind: String, id: int) -> String:
 			return "%s_%d" % [v[0], (id % int(v[1])) + 1]
 		"w":
 			return "w_" + e.wtype(id)
+		"p":
+			return "crew_" + e.crew[id]["k"]
+		"h":
+			return "hidden"
 	return ""
 
 
@@ -281,12 +328,16 @@ func _layout() -> Dictionary:
 	var out := {}
 	for a in e.AR:
 		var items := []
+		if e.hidden.has(a):
+			items.append(["h", a])
 		for c in e.crew_at(a):
 			items.append(["c", c])
 		var ms := e.mons_at(a)
 		ms.sort_custom(func(x, y): return D.MON_ORDER.find(e.mon[x]["l"]) < D.MON_ORDER.find(e.mon[y]["l"]) or (e.mon[x]["l"] == e.mon[y]["l"] and x < y))
 		for m in ms:
 			items.append(["m", m])
+		for c in e.captives_at(a):
+			items.append(["p", c])
 		var slots: Array = e.AR[a]["slots"]
 		if items.size() > slots.size() and e.AR[a].has("dense") and (e.AR[a]["dense"] as Array).size() > slots.size():
 			slots = e.AR[a]["dense"]
@@ -374,7 +425,7 @@ func _rebuild() -> void:
 		var node: Node3D
 		if not pieces.has(k):
 			var mn := _model_name(it[2], it[3])
-			node = _mini(mn)
+			node = _hidden_stack() if mn == "hidden" else _mini(mn)
 			node.set_meta("model", mn)
 			node.rotation.y = randf_range(-0.25, 0.25) + (PI if it[2] == "m" else 0.0)
 			pieces_root.add_child(node)
@@ -395,9 +446,32 @@ func _rebuild() -> void:
 
 
 ## Stato visibile della miniatura: stordita (rovesciata), arma in mano, recinto acceso, selezione.
-func _decorate(node: Node3D, kind: String, id: int) -> void:
+func _decorate(node: Node3D, kind: String, id) -> void:
+	if kind == "h":
+		_hidden_count(node, (e.hidden_at(str(id)) as Array).size())
+		return
 	var inner: Node3D = node.get_child(0) if node.get_child_count() > 0 else null
 	if inner == null:
+		return
+	if kind == "p":
+		# prigioniero: sdraiato in una pozza di melma verde
+		inner.rotation.z = PI * 0.5
+		inner.position.y = 0.14
+		if node.get_node_or_null("melma") == null:
+			var mi := MeshInstance3D.new()
+			mi.name = "melma"
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.42
+			cm.bottom_radius = 0.46
+			cm.height = 0.05
+			mi.mesh = cm
+			var mm := StandardMaterial3D.new()
+			mm.albedo_color = Color(0.35, 0.85, 0.2, 0.75)
+			mm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mm.roughness = 0.2
+			mi.material_override = mm
+			mi.position.y = 0.03
+			node.add_child(mi)
 		return
 	var stunned := false
 	if kind == "c":
@@ -688,6 +762,8 @@ func _click(pos: Vector2) -> void:
 	var best := ""
 	var bd := 1e9
 	for k in pieces:
+		if k.begins_with("h") or k.begins_with("p"):
+			continue
 		var n: Node3D = pieces[k]
 		var sp := _screen(n.position + Vector3(0, 0.25 * n.scale.x, 0))
 		var r := _screen(n.position + Vector3(0.3 * n.scale.x, 0.25 * n.scale.x, 0)).distance_to(_screen(n.position + Vector3(0, 0.25 * n.scale.x, 0)))

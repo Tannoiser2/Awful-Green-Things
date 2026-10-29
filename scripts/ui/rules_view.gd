@@ -45,9 +45,30 @@ Ordine degli effetti: Cresce, Rimpicciolisce, dadi per uccidere (con le mani), F
 • Le armi da lancio a perdere tornano al deposito più sguarnito; il Coltello lanciato resta nell'area colpita.
 • Quando un mostro divora qualcuno, cresce di preferenza un Piccolo, poi un Adulto (che depone l'Uovo), poi un Frammento.
 • Le Cose Verdi che crescono quando le pedine non bastano sono scelte in ordine di arrivo.
-• Varianti nel menu: un Adulto in più ai mostri; il Comunicatore a due frequenze; «Cresce» che fa deporre le uova come nelle edizioni TSR.
+• Varianti e scenari nel menu: vedi la pagina «Varianti e scenari».
 • Gioco online con Firebase: ogni mossa è un passo numerato, tutti i dispositivi giocano la stessa partita."""],
 ]
+
+const OPTIONAL := [
+	["Varianti semplici", """• [b]Un Adulto in più[/b] per le Cose Verdi nella popolazione iniziale.
+• [b]Comunicatore a due frequenze[/b]: se il primo effetto delude si prova l'altra frequenza (un nuovo gettone) e poi si usa ogni volta il migliore dei due.
+• [b]«Cresce» fa deporre le uova[/b] (edizioni TSR): un Adulto colpito da «Cresce» depone un Uovo."""],
+	["Epilogo alternativo", """Al posto dell'Epilogo normale, il viaggio di ogni scialuppa segue una tabella di 35 eventi tirando un d10. Si parte scegliendo la rotta: dritti verso Snudl-1, verso l'ultimo pianeta visitato o verso un sistema inesplorato.
+• La scialuppa può restare [b]senza scorte[/b] (dopo altri dieci anni senza rifornimenti l'equipaggio muore di fame), [b]danneggiata[/b] o [b]persa[/b]: ognuna di queste condizioni peggiora alcuni tiri.
+• Incontri con alieni ostili o intelligenti (evitare, attaccare o comunicare), buchi neri, nubi cosmiche, tempeste ioniche, malattie, relitti alieni, un portale temporale e le malvagie capre spaziali di antimateria.
+• Alcuni membri aiutano: il Pilota, il Capitano, il Primo Ufficiale, il Dottore e l'Infermiere, il Marconista, il Tecnico, il Motorista e l'Ufficiale di Macchina. In battaglia la Pistola, il Carburante o la Granata aggiungono i dadi di un gettone pescato a caso.
+• Chi resta naufrago su un pianeta abitabile conta per metà dei punti."""],
+	["Solitario: il Capitano Yid", """Il Capitano torna sulla Znutar con il Disco e trova tutti addormentati: le Cose Verdi sono in letargo e l'equipaggio è la loro dispensa.
+• [b]Preparazione[/b]: tutto l'equipaggio (tranne il Capitano) e tutte le Cose Verdi, Frammenti compresi, sono [b]pedine coperte[/b] mescolate: una in ogni area tranne gli hangar, due in più dove si trovano armi, altre due in Controllo danni e nelle due Officine, quattro in più su ogni Ponte e il resto in Sala macchine. Il Capitano parte dall'Hangar del Disco. Un Estintore, un Comunicatore e il gettone «5 dadi per uccidere» escono dal gioco.
+• [b]Turno[/b]: prima l'equipaggio (armi, movimento, [b]allarme[/b], attacco), poi le Cose Verdi sveglie. Chi entra in un'area con pedine coperte si ferma; nell'allarme si scoprono: le Cose Verdi si svegliano e attaccano subito, i membri dell'equipaggio restano [b]prigionieri nella melma[/b] finché nella loro area c'è l'equipaggio e non ci sono più Cose Verdi.
+• Se in un turno non si sveglia niente, si sveglia da sola la pedina più lontana dall'equipaggio.
+• [b]La carica finale[/b]: entrando in Controllo danni, su un Ponte, in un'Officina o in Sala macchine, alla fine del turno successivo dell'equipaggio si scopre tutto.
+• [b]Le Cose Verdi[/b] si muovono da sole: [b]crescono tutte[/b] ogni turno (se ci sono pedine libere), inseguono il membro più vicino e attaccano tutte insieme il più debole (il Robot per primo). Mangia la Cosa Verde più grossa che può crescere; «Cresce» fa deporre le uova anche agli Adulti.
+• Niente fuga né autodistruzione: si vince sterminando tutte le Cose Verdi, e i punti sono la costituzione dei sopravvissuti. Si perde se non resta nessuno sveglio."""],
+]
+
+var page := 0
+var cols: HBoxContainer
 
 
 func _ready() -> void:
@@ -76,6 +97,16 @@ func _ready() -> void:
 	var t := UI.title("Le regole", 54)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(t)
+	for i in 2:
+		var tb := UI.button(["Regole base", "Varianti e scenari"][i], 260, 56, 24)
+		var ii := i
+		tb.pressed.connect(func():
+			page = ii
+			_fill())
+		hb.add_child(tb)
+	var sp := Control.new()
+	sp.custom_minimum_size.x = 20
+	hb.add_child(sp)
 	var close := UI.primary(UI.button("Chiudi" if overlay else "Indietro", 200, 56, 26))
 	close.pressed.connect(func():
 		if overlay:
@@ -83,12 +114,19 @@ func _ready() -> void:
 		else:
 			main.show_menu())
 	hb.add_child(close)
-	var cols := HBoxContainer.new()
+	cols = HBoxContainer.new()
 	cols.add_theme_constant_override("separation", 30)
 	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	vb.add_child(cols)
-	var half := 5
-	for part in [SECTIONS.slice(0, half), SECTIONS.slice(half)]:
+	_fill()
+
+
+func _fill() -> void:
+	for c in cols.get_children():
+		c.queue_free()
+	var src: Array = SECTIONS if page == 0 else OPTIONAL
+	var half := 5 if page == 0 else 2
+	for part in [src.slice(0, half), src.slice(half)]:
 		var rt := RichTextLabel.new()
 		rt.bbcode_enabled = true
 		rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
