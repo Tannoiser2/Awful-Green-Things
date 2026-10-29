@@ -155,7 +155,7 @@ func _scene(n: String) -> PackedScene:
 
 ## Miniature fatte con Meshy (assets/minis_meshy): se c'è il modello si usa quello al posto della
 ## miniatura del modulo. Cerca prima il nome esatto (adult_3), poi quello senza variante (adult).
-static var use_meshy := true
+static var use_meshy := false
 
 
 func _meshy_scene(n: String) -> PackedScene:
