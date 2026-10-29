@@ -77,4 +77,9 @@ for k, (f, col) in WEAP.items():
 for k, (f, n, col) in MON.items():
     for i in range(1, n + 1):
         tot += convert("%s%d" % (f, i), "%s_%d" % (k, i), col, "#ffd923", 3500)
+# l'astronave sul suo supporto e le tre scialuppe (decorazione e fuga)
+tot += convert("Znutar", "znutar", "#b8bdc6", "#2a2a2a", 12000)
+tot += convert("Znutar Base", "znutar_base", "#2a2a2a", "#2a2a2a", 2000)
+for k, f in [("saucer", "Saucer"), ("scout", "Scout"), ("cockboat", "Cockboat")]:
+    tot += convert(f, "boat_" + k, "#aab0b9", "#aab0b9", 8000)
 print("facce totali", tot)

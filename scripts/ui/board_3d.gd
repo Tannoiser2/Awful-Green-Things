@@ -122,6 +122,7 @@ func _ready() -> void:
 	vp.add_child(pieces_root)
 	labels_root = Node3D.new()
 	vp.add_child(labels_root)
+	_build_decor()
 	target = Vector3(board_size.x * 0.5, 0, board_size.y * 0.5)
 	_update_cam()
 	resized.connect(func():
@@ -313,10 +314,54 @@ func _layout() -> Dictionary:
 	return out
 
 
+## Decorazioni: la Znutar sul suo supporto accanto al tabellone e le tre scialuppe ormeggiate
+## sul tavolo davanti ai loro hangar (partono quando l'equipaggio fugge).
+var boats := {}
+var _launched_seen := {}
+
+func _build_decor() -> void:
+	var ship := Node3D.new()
+	var base := _mini("znutar_base")
+	ship.add_child(base)
+	var rocket := _mini("znutar")
+	rocket.position = Vector3(0.0, 0.18, 0.0)
+	ship.add_child(rocket)
+	ship.scale = Vector3.ONE * 2.0
+	ship.position = Vector3(-1.4, -0.05, board_size.y * 0.35)
+	ship.rotation.y = 0.5
+	vp.add_child(ship)
+	for b in D.BOATS:
+		var n := _mini("boat_" + b)
+		n.scale = Vector3.ONE * 0.85
+		vp.add_child(n)
+		boats[b] = n
+
+
+func _place_boats() -> void:
+	if e == null:
+		return
+	for b in boats:
+		var n: Node3D = boats[b]
+		var c: Array = e.AR[b]["center"]
+		var dock := Vector3(c[0] * U, -0.05, board_size.y + 0.75)
+		if e.launched.has(b):
+			if not _launched_seen.has(b):
+				_launched_seen[b] = true
+				n.position = dock
+				var tw := n.create_tween()
+				tw.tween_property(n, "position", dock + Vector3(0, 1.2, 1.5), 0.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+				tw.tween_property(n, "position", dock + Vector3(0, 6.0, 14.0), 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+				tw.tween_callback(func(): n.visible = false)
+		else:
+			n.visible = true
+			n.position = dock
+
+
 func _rebuild() -> void:
 	_dirty = false
 	if e == null:
 		return
+	_place_boats()
 	var lay := _layout()
 	# pedine sparite
 	for k in pieces.keys():
@@ -532,10 +577,10 @@ func fit() -> void:
 	if Vector2(vp.size) != size:
 		vp.size = Vector2i(size)
 	user_moved = false
-	target = Vector3(board_size.x * 0.5, 0, board_size.y * 0.5 + 0.4)
+	target = Vector3(board_size.x * 0.5 - 1.2, 0, board_size.y * 0.5 + 0.8)
 	yaw = 0.0
 	pitch = -60.0
-	var pts := [Vector3(0, 0, 0), Vector3(board_size.x, 0, 0), Vector3(0, 0, board_size.y), Vector3(board_size.x, 0, board_size.y)]
+	var pts := [Vector3(-2.6, 0, 0), Vector3(board_size.x, 0, 0), Vector3(-2.6, 0, board_size.y + 1.4), Vector3(board_size.x, 0, board_size.y + 1.4), Vector3(-1.4, 3.5, board_size.y * 0.35)]
 	dist = 30.0
 	for it in 12:
 		_update_cam()
