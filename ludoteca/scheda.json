@@ -1,9 +1,10 @@
 {
   "titolo": "The Awful Green Things from Outer Space",
   "sottotitolo": "uova aliene sulla Znutar",
-  "descrizione": "Il classico fumettoso di Tom Wham (Steve Jackson Games): sull'astronave Znutar le Cose Verdi si schiudono, crescono e mangiano l'equipaggio, che si difende con armi di bordo dagli effetti imprevedibili. IA per i due lati e partite online.",
+  "descrizione": "Il classico fumettoso di Tom Wham (Steve Jackson Games): sull'astronave Znutar le Cose Verdi si schiudono, crescono e mangiano l'equipaggio, che si difende con armi di bordo dagli effetti imprevedibili. IA per i due lati, vista 3D con le miniature e partite online.",
   "online": true,
-  "sezione": "classici",
-  "ordine": 200,
-  "generi": ["Fantascienza", "Umoristico", "Due giocatori"]
+  "sezione": "conversione",
+  "ordine": 185,
+  "bgg": 162,
+  "generi": ["Fantascienza"]
 }
