@@ -30,6 +30,17 @@ func _run(games: int, lc: int, lm: int) -> void:
 		eng.ais[0] = AGTAI.new(lc, 50 + g * 7)
 		eng.ais[1] = AGTAI.new(lm, 51 + g * 7)
 		eng.changed.connect(_check.bind(eng))
+		if OS.get_environment("AGT_STAT") == "1":
+			eng.log_added.connect(func(t):
+				if t.begins_with("— Turno"):
+					var c := {}
+					for m in eng.mon:
+						c[eng.mon[m]["l"]] = c.get(eng.mon[m]["l"], 0) + 1
+					var armed := 0
+					for x in eng.board_crew():
+						if eng.crew[x]["w"] >= 0:
+							armed += 1
+					print(t, " mostri ", c, " equipaggio ", eng.board_crew().size(), " armati ", armed, " note ", eng.known))
 		if OS.get_environment("AGT_LIVE") == "1":
 			eng.log_added.connect(func(t): print(t))
 		await eng.run()

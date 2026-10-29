@@ -6,6 +6,8 @@ extends RefCounted
 const D = preload("res://scripts/data/agt_data.gd")
 
 var level := 1
+var AGGR := float(OS.get_environment("AGT_AGGR")) if OS.get_environment("AGT_AGGR") != "" else 3.0
+var GROUP := float(OS.get_environment("AGT_GROUP")) if OS.get_environment("AGT_GROUP") != "" else 0.4
 var rng := RandomNumberGenerator.new()
 var _plan := []
 var _plan_key := ""
@@ -225,6 +227,8 @@ func _plan_monsters(e: AGTEngine) -> Array:
 		var robot_there: bool = e.on_board(rob) and e.crew[rob]["loc"] == t and c != rob
 		if robot_there:
 			continue   # dove c'è il Robot si può attaccare solo lui
+		if level == 0 and rng.randf() < 0.35:
+			continue   # distratto: lascia perdere questa preda
 		var need := dice_for(con, _thr())
 		var have: int = area_dice.get(t, 0) - committed.get(t, 0)
 		var pick := []
@@ -249,7 +253,7 @@ func _plan_monsters(e: AGTEngine) -> Array:
 	for c in e.board_crew():
 		if c != rob:
 			ccon += int(e.cdef(c)["con"])
-	var hunt := float(mdice) * 3.5 > float(ccon) * 1.3
+	var hunt: bool = float(mdice) * 3.5 > float(ccon) * [1.6, 1.3, 1.0][clampi(level, 0, 2)]
 	var occupancy := {}
 	for id in e.mon:
 		occupancy[e.mon[id]["loc"]] = occupancy.get(e.mon[id]["loc"], 0) + 1
@@ -469,10 +473,11 @@ func _cmove(e: AGTEngine, req: Dictionary) -> Dictionary:
 	if req.get("discovery", false):
 		return _discover(e)
 	var key := "c%d" % e.turn_no
+	var doom := _doom(e) and e.turn_no > 2
 	if _plan_key != key:
 		_plan_key = key
 		_stay = {}
-	var doom := _doom(e) and e.turn_no > 2
+		_hunt = {} if doom or (level == 0 and rng.randf() < 0.5) else _hunt_plan(e)
 	# azioni speciali
 	for c in e.board_crew():
 		for s in e.special_actions(c):
@@ -500,12 +505,148 @@ func _cmove(e: AGTEngine, req: Dictionary) -> Dictionary:
 		if paths.is_empty():
 			_stay[c] = true
 			continue
-		var to := _crew_dest(e, c, paths, doom)
+		var to := ""
+		if _hunt.has(c) and (paths.has(_hunt[c]) or _hunt[c] == e.crew[c]["loc"]):
+			to = _hunt[c]
+		else:
+			to = _crew_dest(e, c, paths, doom)
 		if to == "" or to == e.crew[c]["loc"]:
 			_stay[c] = true
 			continue
 		return {"c": c, "to": to}
 	return {}
+
+
+var _hunt := {}
+
+
+## Contributo di un membro contro l'area x stando nell'area d: {"hand", "single", "area"} in dadi
+## per uccidere (le armi da provare valgono un paio di dadi, Rimpicciolisce ne vale 6).
+func _contrib(e: AGTEngine, c: int, d: String, x: String) -> Dictionary:
+	var out := {"hand": 0, "single": 0, "area": 0}
+	if d == x and e.crew[c]["k"] != "mascot":
+		out["hand"] = int(e.cdef(c)["att"])
+	var w: int = e.crew[c]["w"]
+	if w >= 0:
+		var t := e.wtype(w)
+		var r: String = D.WEAPONS[t]["range"]
+		var ok := false
+		match r:
+			"same":
+				ok = d == x
+			"adj":
+				ok = d == x or x in e.adj(d)
+			"los":
+				ok = x in e.los(d)
+		if ok:
+			var k := e.effect_of(t)
+			var dd := 0
+			if k == "":
+				dd = 2
+			elif k.begins_with("kill"):
+				dd = int(k.substr(4))
+			elif k == "shrink":
+				dd = 6
+			var kind: String = D.WEAPONS[t]["kind"]
+			if kind == "blast":
+				for s2 in e.section(x):
+					if not e.crew_at(s2).is_empty() or s2 == d:
+						dd = 0
+			if kind in ["area", "blast"]:
+				out["area"] = dd
+			elif kind == "single":
+				out["single"] = dd
+	return out
+
+
+func _team_value(e: AGTEngine, x: String, team: Array) -> float:
+	var area := 0
+	var chunks := []
+	for t in team:
+		area += int(t[2]["area"])
+		if t[2]["hand"] > 0:
+			chunks.append(int(t[2]["hand"]))
+		if t[2]["single"] > 0:
+			chunks.append(int(t[2]["single"]))
+	chunks.sort()
+	chunks.reverse()
+	var ms := e.mons_at(x)
+	ms.sort_custom(func(a, b): return _mval(e, a) / float(e.mcon(a)) > _mval(e, b) / float(e.mcon(b)))
+	var val := 0.0
+	for id in ms:
+		var dice := area
+		while not chunks.is_empty() and p_at_least(dice, e.mcon(id)) < 0.75:
+			dice += int(chunks.pop_front())
+		val += p_at_least(dice, e.mcon(id)) * _mval(e, id)
+	return val
+
+
+func _mval(e: AGTEngine, id: int) -> float:
+	return {"A": 4.0, "B": 3.0, "E": 2.2, "F": 1.0}[e.mon[id]["l"]]
+
+
+## Squadre di caccia: per ogni area con Cose Verdi, chi può colpirla in questo turno; si sceglie
+## l'area dove l'attacco congiunto rende di più e si ripete con chi resta.
+func _hunt_plan(e: AGTEngine) -> Dictionary:
+	var plan := {}
+	var avail := []
+	for c in e.board_crew():
+		if e.crew_can_act(c) and not e.moved.has(c) and e.crew[c]["k"] != "mascot":
+			avail.append(c)
+	var targets := []
+	for id in e.mon:
+		if not targets.has(e.mon[id]["loc"]):
+			targets.append(e.mon[id]["loc"])
+	for round_i in 8:
+		var best_x := ""
+		var best_v := 1.2
+		var best_team := []
+		for x in targets:
+			var team := []
+			for c in avail:
+				var here: String = e.crew[c]["loc"]
+				var dests: Array = e.crew_moves(c).keys()
+				dests.append(here)
+				var bd := ""
+				var bc := {}
+				var bs := -99.0
+				for d in dests:
+					var ct := _contrib(e, c, d, x)
+					var sc := float(ct["hand"] + ct["single"] + ct["area"] * 2)
+					if sc <= 0:
+						continue
+					sc -= _danger(e, d) * 0.05
+					if d == here:
+						sc += 0.3
+					if sc > bs:
+						bs = sc
+						bd = d
+						bc = ct
+				if bd != "":
+					team.append([c, bd, bc])
+			if team.is_empty():
+				continue
+			var v := _team_value(e, x, team) - 0.15 * team.size()
+			if v > best_v:
+				best_v = v
+				best_x = x
+				best_team = team
+		if best_x == "":
+			break
+		# solo chi serve davvero: si tolgono i più deboli finché il valore non cala
+		best_team.sort_custom(func(a, b): return (a[2]["hand"] + a[2]["single"] + a[2]["area"] * 2) > (b[2]["hand"] + b[2]["single"] + b[2]["area"] * 2))
+		var full := _team_value(e, best_x, best_team)
+		while best_team.size() > 1:
+			var trial := best_team.slice(0, best_team.size() - 1)
+			if _team_value(e, best_x, trial) >= full - 0.15:
+				best_team = trial
+			else:
+				break
+		for t in best_team:
+			plan[t[0]] = t[1]
+			avail.erase(t[0])
+		targets.erase(best_x)
+	return plan
 
 
 func _want_fence(e: AGTEngine, c: int) -> bool:
@@ -577,27 +718,31 @@ func _crew_dest(e: AGTEngine, c: int, paths: Dictionary, doom: bool) -> String:
 				v = _melee_value(e, a, c) * 1.5 - _approach(e, a) * 1.2
 			else:
 				# armi a distanza: una posizione da cui colpire senza stare in mezzo ai mostri
-				var hit := 0.0
 				var tg := [a]
 				if rng_t == "adj":
 					tg.append_array(e.adj(a))
 				else:
 					tg = e.los(a)
+				var hit := 0.0
 				for x in tg:
-					var n := e.mons_at(x).size()
-					if D.WEAPONS[t]["kind"] == "blast" and not e.crew_at(x).is_empty():
-						n = 0
-					hit = maxf(hit, float(n))
-				v = hit * 2.0 - _approach(e, a) * 0.8
+					if D.WEAPONS[t]["kind"] == "blast":
+						var bad := false
+						for s2 in e.section(x):
+							if not e.crew_at(s2).is_empty():
+								bad = true
+						if bad:
+							continue
+					hit = maxf(hit, _hit_value(e, t, x))
+				v = hit * AGGR - _approach(e, a) * 0.6
 				if e.hot_for_crew(a):
-					v -= 3.0
+					v -= 2.0
 		# rischio di essere divorati al prossimo turno delle Cose Verdi
 		if k != "robot" and not doom:
 			var others := e.crew_at(a).filter(func(x): return x != c).size()
-			var risk := p_at_least(int(dng), int(con)) * (0.6 if others > 0 else 1.0)
+			var risk := p_at_least(int(dng / (1.0 + others * 0.7)), int(con))
 			v -= risk * (12.0 if int(e.cdef(c)["att"]) <= 1 else 7.0) * (1.4 if level >= 2 else 1.0)
 		# un po' di gruppo: insieme si sopravvive
-		v += minf(e.crew_at(a).size(), 3) * 0.3
+		v += minf(e.crew_at(a).filter(func(x): return x != c).size(), 4) * GROUP
 		v += rng.randf() * (1.0 if level == 0 else 0.3)
 		if a == here:
 			v += 0.2
@@ -605,6 +750,36 @@ func _crew_dest(e: AGTEngine, c: int, paths: Dictionary, doom: bool) -> String:
 			bv = v
 			best = a
 	return best
+
+
+## Quanto vale colpire l'area x con un'arma di tipo t (morti attese, pesate).
+func _hit_value(e: AGTEngine, t: String, x: String) -> float:
+	var ms := e.mons_at(x)
+	if D.WEAPONS[t]["kind"] == "blast":
+		ms = []
+		for s2 in e.section(x):
+			ms.append_array(e.mons_at(s2))
+	if ms.is_empty():
+		return 0.0
+	var k := e.effect_of(t)
+	var area: bool = D.WEAPONS[t]["kind"] != "single"
+	if k == "":
+		return 2.5 if (not area or ms.size() <= 3) else 1.0
+	var best := 0.0
+	var tot := 0.0
+	for id in ms:
+		var mv: float = {"A": 3.0, "B": 2.0, "F": 0.8, "E": 1.0}[e.mon[id]["l"]]
+		var p := 0.0
+		if k.begins_with("kill"):
+			p = p_at_least(int(k.substr(4)), e.mcon(id))
+		elif k == "shrink":
+			p = 0.8 if e.mon[id]["l"] in ["A", "B"] else 1.0
+		elif k == "stun5":
+			p = p_at_least(5, e.mcon(id)) * 0.4
+		var val := p * mv
+		tot += val
+		best = maxf(best, val)
+	return tot if area else best
 
 
 func _melee_value(e: AGTEngine, a: String, c: int) -> float:
@@ -704,7 +879,7 @@ func _plan_area(e: AGTEngine, a: String) -> Array:
 			if not safe:
 				continue
 		if k == "":
-			if untried_used != "" or ms.size() > 1 or (ms.size() == 1 and e.mon[ms[0]]["l"] == "E"):
+			if untried_used != "" or ms.size() > 3 or (ms.size() == 1 and e.mon[ms[0]]["l"] == "E"):
 				continue
 			untried_used = t
 		elif not _good(k) and not (k == "stun5" and _adults(e, a) > 0):
