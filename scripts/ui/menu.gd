@@ -26,6 +26,7 @@ var names := {"crew": "Equipaggio", "mon": "Cose Verdi", "fo": "Primo Ufficiale"
 var speed := 1
 var view3d := 1
 var scenario := 0                # 0 = classica, 1 = solitario, 2 = ammutinamento (3 giocatori)
+var species := 0                 # 0 = Cose Verdi, 1 = Arancioni, 2 = Viola
 var variants := {}
 var msg: Label
 var seats_box: VBoxContainer
@@ -33,6 +34,7 @@ var seats_box: VBoxContainer
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	UI.species = "green"
 	var st: Dictionary = main.menu_state
 	if not st.is_empty():
 		for k in st["modes"]:
@@ -43,6 +45,7 @@ func _ready() -> void:
 		variants = st["variants"].duplicate()
 		view3d = st.get("view3d", 1)
 		scenario = st.get("scenario", 0)
+		species = st.get("species", 0)
 	page = Control.new()
 	page.size = Vector2(1920, 1080)
 	add_child(page)
@@ -117,8 +120,16 @@ func _ready() -> void:
 		cb.toggled.connect(func(on): variants[key] = on)
 		cb.custom_minimum_size.x = 535
 		vgrid.add_child(cb)
-	rv.add_child(_segmented("Velocità IA", ["Lenta", "Normale", "Veloce", "Istantanea"], speed, func(k): speed = k, 160))
-	rv.add_child(_segmented("Vista", ["2D: il tabellone", "3D: le miniature"], view3d, func(k): view3d = k, 330))
+	# velocità dell'IA, vista e specie dei mostri: tre tendine sulla stessa riga
+	var opt_row := HBoxContainer.new()
+	opt_row.add_theme_constant_override("separation", 14)
+	rv.add_child(opt_row)
+	_dropdown(opt_row, "Velocità IA", ["Lenta", "Normale", "Veloce", "Istantanea"], speed, func(k): speed = k, 170)
+	_dropdown(opt_row, "Vista", ["2D: il tabellone", "3D: le miniature"], view3d, func(k): view3d = k, 220)
+	var sp := _dropdown(opt_row, "Mostri", ["Cose Verdi", "Cose Arancioni", "Cose Viola"], species, func(k):
+		species = k
+		_refresh_seats(), 200)
+	sp.tooltip_text = "Updates and Optional Rules: le Cose Arancioni (Tom Wham) esplodono in Frammenti invece di deporre uova;\nle Cose Viola (Allen Varney e Val Cassotta) non fanno Frammenti, si dividono in Giovani e gli Adulti passano nei muri."
 
 	msg = UI.label("", 24, UI.ORANGE_L, UI.font_bold)
 	msg.position = Vector2(760, 1000)
@@ -165,7 +176,7 @@ func _center() -> void:
 
 
 func _store() -> void:
-	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate(), "view3d": view3d, "scenario": scenario}
+	main.menu_state = {"modes": modes.duplicate(), "names": names.duplicate(), "speed": speed, "variants": variants.duplicate(), "view3d": view3d, "scenario": scenario, "species": species}
 
 
 func _refresh_seats() -> void:
@@ -194,13 +205,15 @@ func _refresh_seats() -> void:
 		hb.add_theme_constant_override("separation", 14)
 		row.add_child(hb)
 		var ic: Texture2D = UI.crew_tex("captain") if i == 0 else (UI.mon_tex("A") if i == 1 else UI.crew_tex("first_officer"))
+		if i == 1 and species > 0:
+			ic = UI.tex("res://assets/counters/%s_adult.png" % ["green", "orange", "purple"][species])
 		var isz := 64 if scenario == 2 else 80
 		hb.add_child(UI.icon_rect(ic, Vector2(isz, isz)))
 		var vb := VBoxContainer.new()
 		vb.custom_minimum_size.x = 346 if scenario == 2 else 330
-		var ttl := "L'Equipaggio della Znutar" if i == 0 else "Le Cose Verdi"
+		var ttl: String = "L'Equipaggio della Znutar" if i == 0 else ["Le Cose Verdi", "Le Cose Arancioni", "Le Cose Viola"][species]
 		if scenario == 2:
-			ttl = ["La squadra del Capitano", "Le Cose Verdi", "La squadra del Primo Uff."][i]
+			ttl = ["La squadra del Capitano", ["Le Cose Verdi", "Le Cose Arancioni", "Le Cose Viola"][species], "La squadra del Primo Uff."][i]
 		vb.add_child(UI.heading(ttl, 26 if scenario == 2 else 28, UI.YELLOW if i == 0 else (UI.SLIME if i == 1 else UI.ORANGE_L)))
 		var le := LineEdit.new()
 		le.text = names[k]
@@ -261,6 +274,20 @@ func _segmented(label_text: String, items: Array, cur: int, cb: Callable, w := 2
 	return hb
 
 
+func _dropdown(row: HBoxContainer, label_text: String, items: Array, cur: int, cb: Callable, w := 200) -> OptionButton:
+	var l := UI.label(label_text, 21, Color.WHITE, UI.font_bold)
+	row.add_child(l)
+	var ob := OptionButton.new()
+	for it in items:
+		ob.add_item(it)
+	ob.selected = cur
+	ob.custom_minimum_size = Vector2(w, 44)
+	ob.add_theme_font_size_override("font_size", 19)
+	ob.item_selected.connect(func(i): cb.call(i))
+	row.add_child(ob)
+	return ob
+
+
 func _big_button(text: String, w: float, primary := false) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -300,6 +327,8 @@ func _config() -> Dictionary:
 			opts.erase(k)
 	if scenario == 2:
 		opts["mutiny"] = true
+	if species > 0 and scenario != 1:
+		opts["species"] = ["green", "orange", "purple"][species]
 	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts, "view3d": view3d == 1}
 
 

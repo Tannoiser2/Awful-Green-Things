@@ -66,6 +66,9 @@ const OPTIONAL := [
 • [b]Cucina, Mensa e Zgwortz[/b]: nel loro attacco, le Cose Verdi in Cucina o in Mensa senza equipaggio tirano un dado: 1 Cresce, 2 Rimpicciolisce, 3 quattro dadi per uccidere, 4 cinque per stordire, 5-6 un barattolo di Zgwortz. Lo Zgwortz non ha un gettone: ogni barattolo tira (1-2 Cresce, 3 niente, 4 quattro dadi per uccidere, 5 cinque per stordire, 6 reazione allergica mortale).
 • [b]Varianti delle armi[/b]: il gettone «1 dado di Frammenti» pescato per scoprire un'arma resta solo con 1-2, altrimenti se ne pesca un altro; un Adulto da solo con un'arma già usata può mangiarla (l'arma esce dal gioco, Zgwortz, Granate e Taniche tornano al deposito) e subisce un gettone a caso; una Tanica che esplode in un Serbatoio con altre taniche lo fa saltare: muore chi c'è dentro, le aree accanto subiscono un'esplosione, il Serbatoio sparisce e l'equipaggio perde 20 punti (se saltano tutti e due, a bordo non si fanno punti).
 • [b]Mostri nascosti[/b]: chi guida solo l'equipaggio vede le Cose Verdi solo nelle aree in linea di vista di qualcuno sveglio e le Uova solo nella stessa area o lungo i corridoi aperti; si attaccano solo i mostri visibili."""],
+	["Altri mostri: Cose Arancioni e Cose Viola", """Dal menu (Mostri) si può giocare contro un'altra specie (Updates and Optional Rules v1.2).
+• [b]Le Cose Arancioni[/b] (The Obnoxious Orange Things from Another Place, Tom Wham): Frammenti 1/7/1, Giovani 2/11/2, Adulti 5/15/3 (al massimo 24, 20 e 16). Niente uova: quando crescono o mangiano, gli Adulti esplodono in 1-6 Frammenti. Partono dalla Mensa con 6 Frammenti, poi 5 Giovani e 4 Adulti; chi può stare su tutti e due i Ponti si divide fra i due; lo Zgwortz è già noto (1 dado di Frammenti). Se in Mensa c'è già l'equipaggio la scoperta è immediata, altrimenti si scopre entrando in Mensa.
+• [b]Le Cose Viola[/b] (The Insidious Purple Things from an Abandoned Starbase, Allen Varney e Val Cassotta): Uova 0/6/0, Giovani 3/10/1, Adulti 1/20/3 (al massimo 17, 28 e 15). Niente Frammenti: l'Adulto che mangia si divide in 2-4 Giovani; «1 dado di Frammenti» divide l'Adulto in 1-3 Giovani e il Giovane in 0-2. Gli Adulti passano attraverso le pareti per entrare in una stanza (non nell'Officina di poppa, in Infermeria, nella Corsia ospedaliera e nel Laboratorio). Popolazione iniziale da 5 Uova, 6 Giovani e 2 Adulti a 1 Uovo, 7 Giovani e 4 Adulti."""],
 	["Epilogo alternativo", """Al posto dell'Epilogo normale, il viaggio di ogni scialuppa segue una tabella di 35 eventi tirando un d10. Si parte scegliendo la rotta: dritti verso Snudl-1, verso l'ultimo pianeta visitato o verso un sistema inesplorato.
 • La scialuppa può restare [b]senza scorte[/b] (dopo altri dieci anni senza rifornimenti l'equipaggio muore di fame), [b]danneggiata[/b] o [b]persa[/b]: ognuna di queste condizioni peggiora alcuni tiri.
 • Incontri con alieni ostili o intelligenti (evitare, attaccare o comunicare), buchi neri, nubi cosmiche, tempeste ioniche, malattie, relitti alieni, un portale temporale e le malvagie capre spaziali di antimateria.
@@ -145,7 +148,7 @@ func _fill() -> void:
 	for c in cols.get_children():
 		c.queue_free()
 	var src: Array = SECTIONS if page == 0 else OPTIONAL
-	var half := 5 if page == 0 else 3
+	var half := 5 if page == 0 else 4
 	for part in [src.slice(0, half), src.slice(half)]:
 		var rt := RichTextLabel.new()
 		rt.bbcode_enabled = true

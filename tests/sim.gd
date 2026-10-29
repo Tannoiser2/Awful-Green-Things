@@ -28,6 +28,8 @@ func _run(games: int, lc: int, lm: int) -> void:
 		var o := {}
 		for k in OS.get_environment("AGT_OPTS").split(",", false):
 			o[k] = true
+		if OS.get_environment("AGT_SPECIES") != "":
+			o["species"] = OS.get_environment("AGT_SPECIES")
 		var seats := [{"name": "", "ai": true, "level": lc}, {"name": "", "ai": true, "level": lm}]
 		if o.has("mutiny"):
 			seats.append({"name": "", "ai": true, "level": lc})

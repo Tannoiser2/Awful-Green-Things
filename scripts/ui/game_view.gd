@@ -54,6 +54,7 @@ func _ready() -> void:
 		online.view = self
 		engine.online = online
 	engine.setup(config)
+	UI.species = engine.species()
 	for s in engine.players.size():
 		var p: Dictionary = engine.players[s]
 		engine.ais[s] = AGTAI.new(int(p["level"]), int(config.get("seed", 0)) * 7 + s + 1 if config.has("seed") else randi())
@@ -359,7 +360,7 @@ func _info(a: String) -> void:
 			mp.append("[color=#ffd923]%s[/color] (%d/%d/%d: %s)" % [D.MEGA[mg]["name"], engine.matt(m), engine.mcon(m), engine.mmov(m), D.MEGA[mg]["tip"]])
 	for l in D.MON_ORDER:
 		if cnt.get(l, 0) > 0:
-			mp.append("%d %s" % [cnt[l], D.MON[l]["plural"] if cnt[l] > 1 else D.MON[l]["name"]])
+			mp.append("%d %s" % [cnt[l], engine.mdef(l)["plural"] if cnt[l] > 1 else engine.mdef(l)["name"]])
 	var wp := []
 	for w in engine.weapons_at(a):
 		wp.append(engine.wname(engine.wtype(w)) + (" (acceso)" if engine.wpn[w]["on"] else ""))
@@ -375,7 +376,7 @@ func _info(a: String) -> void:
 	if not parts.is_empty():
 		txt += "\n[color=#4fb3ff]Equipaggio:[/color] " + ", ".join(parts)
 	if not mp.is_empty():
-		txt += "\n[color=#7be04a]Cose Verdi:[/color] " + ", ".join(mp) + (" (%d storditi)" % st if st > 0 else "")
+		txt += "\n[color=#7be04a]%s:[/color] " % D.SPECIES[engine.species()]["name"] + ", ".join(mp) + (" (%d storditi)" % st if st > 0 else "")
 	if not wp.is_empty():
 		txt += "\n[color=#ff9a4a]A terra:[/color] " + ", ".join(wp)
 	if engine.webs.has(a):
@@ -605,7 +606,7 @@ func _build_decision() -> void:
 	phase_lbl.text = {"crew_setup": "Ai posti!", "mplace": "Le uova", "grow": "Crescita", "mmove": "Movimento",
 		"mattack": "Pappa!", "grab": "Armi!", "cmove": "Scoperta!" if req.get("discovery", false) else "Movimento",
 		"cattack": "All'attacco!", "pick": "Decisione", "loc": "Scegli un'area"}.get(req["type"], "")
-	hint_lbl.text = str(req.get("title", ""))
+	hint_lbl.text = engine.sp_text(str(req.get("title", "")))
 	match req["type"]:
 		"pick":
 			for i in req["options"].size():
@@ -687,11 +688,13 @@ func _build_mplace() -> void:
 				break
 	_add_text("Una Cosa Verde per area, ognuna accanto a un'area già occupata; mai dove c'è l'equipaggio. Scegli il tipo, poi tocca un'area evidenziata.", UI.MUTED)
 	for k in ["A", "B", "E"]:
+		if int(engine.mdef(k)["limit"]) <= 0:
+			continue
 		var n := int(left.get(k, 0))
 		var hb := HBoxContainer.new()
 		hb.add_child(UI.icon_rect(UI.mon_tex(k), Vector2(48, 48)))
 		var kk: String = k
-		var b := UI.button("%s: ne restano %d" % [D.MON[k]["plural"], n], 400, 48)
+		var b := UI.button("%s: ne restano %d" % [engine.mdef(k)["plural"], n], 400, 48)
 		b.disabled = n <= 0
 		if k == place_l:
 			UI.primary(b)
@@ -707,6 +710,10 @@ func _build_mplace() -> void:
 
 func _build_grow() -> void:
 	var what := {"F": "I Frammenti diventano Piccoli", "E": "Le Uova si schiudono: diventano Piccoli", "B": "I Piccoli diventano Adulti", "A": "Ogni Adulto depone un Uovo"}
+	if engine.species() == "orange":
+		what = {"F": "I Frammenti diventano Giovani", "B": "I Giovani diventano Adulti", "A": "Gli Adulti esplodono in 1-6 Frammenti"}
+	elif engine.species() == "purple":
+		what = {"E": "Le Uova si schiudono: diventano Giovani", "B": "I Giovani diventano Adulti", "A": "Ogni Adulto depone un Uovo"}
 	var cnt := {}
 	for m in engine.mon:
 		if not engine.mon[m]["st"]:

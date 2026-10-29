@@ -196,6 +196,8 @@ func _grow(e: AGTEngine, req: Dictionary) -> String:
 				v = mini(n, e.avail("A")) * 3.0
 			"A":
 				v = mini(n, e.avail("E")) * 1.25
+				if e.species() == "orange":
+					v = mini(n, e.avail("F")) * 1.6 - n * 1.0   # gli Adulti esplodono in Frammenti
 		if v > bv:
 			bv = v
 			best = l

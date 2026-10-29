@@ -36,6 +36,9 @@ repository è pubblico).
   Tessitore con le ragnatele, Cervellone che usa le armi e l'autodistruzione); **Cucina, Mensa e Zgwortz**;
   **varianti delle armi** (Frammenti ritirati, armi mangiate, Serbatoi che esplodono); **mostri nascosti**.
   Le pareti che il Melmoso può sciogliere vengono da `tools/muri.py` (`assets/data/muri.json`).
+- **Altri mostri** (Updates and Optional Rules v1.2): le **Cose Arancioni** (Adulti che esplodono in Frammenti,
+  partenza dalla Mensa) e le **Cose Viola** (niente Frammenti, Adulti che si dividono in Giovani e passano
+  attraverso le pareti), con le pedine ricolorate.
 - **Solitario** (Solitaire Rules v1.1): il Capitano Yid da solo contro le Cose Verdi in letargo, nascoste sotto
   pedine coperte insieme all'equipaggio prigioniero; allarme, risveglio spontaneo, carica finale e Cose Verdi
   che si muovono da sole.
@@ -98,6 +101,8 @@ semplifica le mesh per la versione web, separa la basetta dalla figura e le colo
   metamorfosi sono sempre tentati. Non ci sono la telecamera di sorveglianza, le uova nascoste da cercare,
   la depressurizzazione, i buchi fatti con la Saldatrice e le varianti «Combinazione», «Effetto variabile» e
   «Repulsione». Con i mostri nascosti l'IA dell'equipaggio attacca solo ciò che vede ma per muoversi sa tutto.
+- Cose Arancioni: quando si sceglie di far crescere gli Adulti, esplodono tutti. I Megadulti valgono solo per
+  le Cose Verdi; nel solitario ci sono sempre le Cose Verdi.
 - Ammutinamento: il turno è Cose Verdi, Capitano, Primo Ufficiale (niente secondo turno dei mostri, che serve
   solo con un quarto giocatore). Se tutte e due le squadre scoprono le Cose Verdi attaccano una dopo l'altra.
   Sterminate le Cose Verdi la partita finisce e contano i sopravvissuti di ogni squadra (al posto delle

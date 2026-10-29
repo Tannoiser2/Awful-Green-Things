@@ -335,6 +335,17 @@ func _mini(n: String) -> Node3D:
 	return holder
 
 
+## Cose Arancioni e Viola: la figura della miniatura cambia colore (la basetta resta gialla).
+func _tint(n: Node, col: Color) -> void:
+	for ch in n.get_children():
+		if ch is MeshInstance3D and String(ch.name).begins_with("figura"):
+			var m := StandardMaterial3D.new()
+			m.albedo_color = col
+			m.roughness = 0.5
+			(ch as MeshInstance3D).material_override = m
+		_tint(ch, col)
+
+
 ## Pila di pedine coperte (solitario): dischetti scuri con un punto interrogativo.
 func _hidden_stack() -> Node3D:
 	var holder := Node3D.new()
@@ -552,6 +563,8 @@ func _rebuild() -> void:
 		if not pieces.has(k):
 			var mn := _model_name(it[2], it[3])
 			node = _hidden_stack() if mn == "hidden" else _mini(mn)
+			if it[2] == "m" and e.species() != "green":
+				_tint(node, Color("#f28c28") if e.species() == "orange" else Color("#9a4fd8"))
 			node.set_meta("model", mn)
 			node.rotation.y = randf_range(-0.25, 0.25) + (PI if it[2] == "m" else 0.0)
 			pieces_root.add_child(node)

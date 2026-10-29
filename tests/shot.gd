@@ -69,6 +69,8 @@ func _run() -> void:
 		seats.append({"name": "Primo Ufficiale", "ai": true, "level": 1})
 	for k in OS.get_environment("AGT_OPTS").split(",", false):
 		o[k] = true
+	if OS.get_environment("AGT_SPECIES") != "":
+		o["species"] = OS.get_environment("AGT_SPECIES")
 	main.start_game({"seats": seats, "ai_delay": 0.0, "opts": o, "view3d": OS.get_environment("AGT_2D") != "1",
 		"seed": int(OS.get_environment("AGT_SEED")) if OS.get_environment("AGT_SEED") != "" else 7})
 	await wait(10)

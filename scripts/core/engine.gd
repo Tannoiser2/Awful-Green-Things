@@ -142,7 +142,16 @@ func _fx(kind: String, data: Dictionary) -> void:
 		fx.emit(kind, data)
 
 
+## Testi con il nome della specie giusta (Cose Arancioni o Viola al posto delle Verdi).
+func sp_text(t: String) -> String:
+	if species() == "green":
+		return t
+	var sp: Dictionary = D.SPECIES[species()]
+	return t.replace("Cose Verdi", sp["name"]).replace("Cosa Verde", sp["one"]).replace("Piccoli", "Giovani").replace("Piccolo", "Giovane")
+
+
 func log_msg(t: String) -> void:
+	t = sp_text(t)
 	log_lines.append(t)
 	log_added.emit(t)
 
@@ -150,7 +159,7 @@ func log_msg(t: String) -> void:
 func pname(s: int) -> String:
 	if s < 0 or s >= players.size():
 		return "?"
-	var def: String = "Equipaggio" if s == CREW_SEAT else "Cose Verdi"
+	var def: String = "Equipaggio" if s == CREW_SEAT else String(D.SPECIES[species()]["name"])
 	if mutiny():
 		def = ["Il Capitano", "Cose Verdi", "Il Primo Ufficiale"][s]
 	var n: String = players[s]["name"]
@@ -319,7 +328,7 @@ func mcon(id: int) -> int:
 	var mg: String = mon[id].get("mega", "")
 	if mg != "":
 		return int(D.MEGA[mg]["con"])
-	return D.MON[mon[id]["l"]]["con"]
+	return mdef(mon[id]["l"])["con"]
 
 
 func matt(id: int) -> int:
@@ -331,21 +340,21 @@ func matt(id: int) -> int:
 		return 1
 	if mg != "":
 		return int(D.MEGA[mg]["att"])
-	return D.MON[mon[id]["l"]]["att"]
+	return mdef(mon[id]["l"])["att"]
 
 
 func mmov(id: int) -> int:
 	var mg: String = mon[id].get("mega", "")
 	if mg != "":
 		return int(D.MEGA[mg]["mov"])
-	return int(D.MON[mon[id]["l"]]["mov"])
+	return int(mdef(mon[id]["l"])["mov"])
 
 
 func mname(id: int) -> String:
 	var mg: String = mon[id].get("mega", "")
 	if mg != "":
 		return String(D.MEGA[mg]["short"])
-	return D.MON[mon[id]["l"]]["name"]
+	return mdef(mon[id]["l"])["name"]
 
 
 func mon_count(l := "") -> int:
@@ -356,8 +365,21 @@ func mon_count(l := "") -> int:
 	return n
 
 
+func species() -> String:
+	return str(opts.get("species", "green")) if not solo() else "green"
+
+
+func mdef(l: String) -> Dictionary:
+	return D.SPECIES[species()]["mon"][l]
+
+
+## Livelli che esistono per la specie (le Arancioni non hanno uova, le Viola non hanno frammenti).
+func levels() -> Array:
+	return ["A", "B", "F", "E"].filter(func(l): return int(mdef(l)["limit"]) > 0)
+
+
 func mlimit(l: String) -> int:
-	return int(D.MUT_LIMIT[l]) if mutiny() else int(D.MON[l]["limit"])
+	return int(D.MUT_LIMIT[l]) if (mutiny() and species() == "green") else int(mdef(l)["limit"])
 
 
 func avail(l: String) -> int:
@@ -464,6 +486,13 @@ func _must_stop(a: String, for_crew: bool) -> bool:
 
 ## Vicini per chi cammina, per le tute a reazione (anche lo spazio) e per i carrelli elevatori.
 func _nbrs(a: String, mode: String) -> Array:
+	if mode == "ooze":
+		# le Cose Viola adulte passano anche attraverso le pareti, ma solo per entrare in una stanza
+		var o2: Array = adj(a).duplicate()
+		for w in walls_of(a):
+			if AR[w]["kind"] in ["stanza", "hangar"] and not (w in D.PURPLE_NO_OOZE) and not o2.has(w):
+				o2.append(w)
+		return o2
 	if mode == "walk" or not outside():
 		return adj(a)
 	if mode == "jet":
@@ -537,7 +566,7 @@ func crew_moves(id: int) -> Dictionary:
 	if discovery:
 		var out := {}
 		for a in r:
-			if not mons_at(a).is_empty():
+			if not mons_at(a).is_empty() and (species() != "orange" or a == "mess"):
 				out[a] = r[a]
 		return out
 	return r
@@ -657,11 +686,14 @@ func mon_moves(ids: Array) -> Dictionary:
 		if cost > 2.0:
 			return {}
 		return reach(loc, mmov(runner) - int(ceil(cost)), false, "walk", runner)
+	var all_a := true
 	for id in ids:
 		if not mon_mobile(id) or mon[id]["loc"] != loc:
 			return {}
 		mv = mini(mv, mmov(id))
-	var out := reach(loc, mv, false, "walk", ids[0])
+		if mon[id]["l"] != "A":
+			all_a = false
+	var out := reach(loc, mv, false, "ooze" if (species() == "purple" and all_a) else "walk", ids[0])
 	if ids.size() == 1 and is_mega(ids[0], "slimer"):
 		for w in walls_of(loc):
 			if not out.has(w):
@@ -735,6 +767,8 @@ func run() -> void:
 		_finish()
 
 
+var _bridge_turn := 0
+
 func _setup_crew() -> void:
 	phase = "crew_setup"
 	for t in ([0, 2] if mutiny() else [0]):
@@ -747,6 +781,10 @@ func _setup_crew() -> void:
 					options[id] = tab[crew[id]["k"]]
 			else:
 				options[id] = cdef(id)["start"]
+				# Cose Arancioni: chi può stare su tutti e due i Ponti si divide fra i due
+				if species() == "orange" and "bridge1" in options[id] and "bridge2" in options[id]:
+					options[id] = ["bridge1" if (_bridge_turn % 2) == 0 else "bridge2"]
+					_bridge_turn += 1
 		var r = await decide(t, {"type": "crew_setup", "options": options,
 			"title": "Disponi la tua squadra nelle aree di partenza" if mutiny() else "Disponi l'equipaggio nelle aree di partenza"})
 		for id in options:
@@ -763,19 +801,32 @@ func _setup_crew() -> void:
 func _setup_monsters() -> void:
 	phase = "mon_setup"
 	var p := d6()
-	var pop: Array = D.MUT_POP[p - 1] if mutiny() else D.POPULATION[p - 1]
+	var pop: Array = D.MUT_POP[p - 1] if (mutiny() and species() == "green") else D.POPULATION[p - 1]
+	if species() == "purple":
+		pop = D.PURPLE_POP[p - 1]
 	var left := {"E": pop[0], "B": pop[1], "A": pop[2]}
+	if species() == "orange":
+		left = {"E": 0, "B": 5, "A": 4}
 	if opts.get("extra_adult", false):
 		left["A"] += 1
 	dice = [p]
 	dice_info = "Popolazione"
-	log_msg("Tiro per la popolazione: %d → %d Uova, %d Piccoli, %d Adulti." % [p, left["E"], left["B"], left["A"]])
-	_fx("dice", {"dice": [p], "info": "Popolazione iniziale", "total": p})
+	if species() == "orange":
+		log_msg("Le Cose Arancioni escono dalla Mensa: 6 Frammenti, poi 5 Giovani e 4 Adulti.")
+	else:
+		log_msg("Tiro per la popolazione: %d → %d Uova, %d Piccoli, %d Adulti." % [p, left["E"], left["B"], left["A"]])
+		_fx("dice", {"dice": [p], "info": "Popolazione iniziale", "total": p})
 	var p2 := d6()
 	var first := ""
 	if p2 <= 5:
 		first = D.FIRST_AREA[p2 - 1]
-	if first == "" or not crew_at(first).is_empty():
+	if species() == "orange":
+		first = "mess"
+		for i in 6:
+			_add_mon("F", "mess")
+		known["zgwortz"] = "frag"
+		log_msg("Lo Zgwortz ha fatto esplodere la prima Cosa Arancione: il suo effetto è noto (1 dado di Frammenti).")
+	if species() != "orange" and (first == "" or not crew_at(first).is_empty()):
 		var free := D.FIRST_AREA.filter(func(a): return crew_at(a).is_empty())
 		if free.is_empty():
 			free = D.area_list().filter(func(a): return crew_at(a).is_empty())
@@ -785,7 +836,7 @@ func _setup_monsters() -> void:
 	var placed := 0
 	while left["A"] + left["B"] + left["E"] > 0 and not abort:
 		var allowed: Array
-		if placed == 0:
+		if placed == 0 and species() != "orange":
 			allowed = [first]
 		else:
 			allowed = _placement_areas()
@@ -842,7 +893,9 @@ func _discovery() -> void:
 	moved = {}
 	hot_entry = {}
 	attacked = {}
-	if mutiny():
+	if species() == "orange" and not crew_at("mess").is_empty():
+		log_msg("C'è già l'equipaggio in Mensa: le Cose Arancioni sono scoperte subito.")
+	elif mutiny():
 		await _discovery_mut()
 	else:
 		log_msg("Allarme! Uno o due membri dell'equipaggio scoprono le Cose Verdi.")
@@ -941,7 +994,9 @@ func grow_options() -> Array:
 		if n == 0:
 			continue
 		var target := "E" if l == "A" else ("A" if l == "B" else "B")
-		if avail(target) > 0:
+		if l == "A" and species() == "orange":
+			target = "F"
+		if avail(target) > 0 or (l == "A" and species() == "orange"):
 			out.append(l)
 	return out
 
@@ -965,6 +1020,10 @@ func _apply_grow(l: String) -> void:
 					mon[id]["l"] = "A"
 					n += 1
 			"A":
+				if species() == "orange":
+					_orange_burst(id, "")
+					n += 1
+					continue
 				if megadults() and is_mega(id):
 					continue
 				if megadults() and not tried:
@@ -1101,7 +1160,7 @@ func _attackers(ms: Array) -> String:
 	var parts := []
 	for l in D.MON_ORDER:
 		if cnt.has(l):
-			parts.append("%d %s" % [cnt[l], D.MON[l]["plural"] if cnt[l] > 1 else D.MON[l]["name"]])
+			parts.append("%d %s" % [cnt[l], mdef(l)["plural"] if cnt[l] > 1 else mdef(l)["name"]])
 	return ", ".join(parts) + (" attaccano" if ms.size() > 1 else " attacca")
 
 
@@ -1121,6 +1180,10 @@ func _eat(ms: Array) -> void:
 	var best := -1
 	# di norma cresce un Piccolo; nel solitario mangia il più grosso che può crescere
 	var pref := [["A", "E"], ["B", "A"], ["F", "B"]] if solo() else [["B", "A"], ["A", "E"], ["F", "B"]]
+	if species() == "orange":
+		pref = [["B", "A"], ["A", "A"], ["F", "B"]]
+	elif species() == "purple":
+		pref = [["B", "A"], ["A", "A"]]
 	for p in pref:
 		for mid in ms:
 			if mon[mid]["l"] == p[0] and avail(p[1]) > 0 and (not is_mega(mid) or is_mega(mid, "breeder")):
@@ -1134,6 +1197,20 @@ func _eat(ms: Array) -> void:
 		log_msg("L'Adulto che ha mangiato tenta la metamorfosi.")
 		_try_mega(best)
 		return
+	if species() == "orange" and mon[best]["l"] == "A":
+		_orange_burst(best, "L'Adulto che ha mangiato")
+		return
+	if species() == "purple" and mon[best]["l"] == "A":
+		var a3: String = mon[best]["loc"]
+		var nb := rng.randi_range(1, 3) + 1
+		mon.erase(best)
+		var made := 0
+		for i in nb:
+			if avail("B") > 0:
+				_add_mon("B", a3)
+				made += 1
+		log_msg("L'Adulto che ha mangiato si divide in %d Giovani." % made)
+		return
 	match mon[best]["l"]:
 		"B":
 			mon[best]["l"] = "A"
@@ -1144,6 +1221,20 @@ func _eat(ms: Array) -> void:
 		"F":
 			mon[best]["l"] = "B"
 			log_msg("Il Frammento che ha mangiato diventa un Piccolo.")
+
+
+## Cose Arancioni: l'Adulto esplode in 1-6 Frammenti.
+func _orange_burst(id: int, who: String) -> void:
+	var a: String = mon[id]["loc"]
+	mon.erase(id)
+	var n := d6()
+	var made := 0
+	for i in n:
+		if avail("F") > 0:
+			_add_mon("F", a)
+			made += 1
+	_fx("frag", {"area": a, "n": made})
+	log_msg("%s esplode in %d Frammenti." % [who if who != "" else "Un Adulto in " + area_name(a), made])
 
 
 func _robot_eaten(mid: int) -> void:
@@ -1585,24 +1676,28 @@ func _apply_effects(eff: Dictionary) -> Dictionary:
 				mon[id]["l"] = "B"
 			elif l == "B" and avail("A") > 0:
 				mon[id]["l"] = "A"
+			elif l == "A" and species() == "orange":
+				_orange_burst(id, "")
 			elif l == "A" and megadults():
 				if not is_mega(id):
 					_try_mega(id)
 			elif l == "A" and opts.get("grow_eggs", false) and avail("E") > 0:
 				_add_mon("E", mon[id]["loc"])
-			parts.append("%s cresce" % D.MON[l]["name"])
+			parts.append("%s cresce" % mdef(l)["name"])
 	# 2. Rimpicciolisce
 	for id in ids:
 		if mon.has(id) and eff[id]["shrink"]:
 			var l: String = mon[id]["l"]
 			var to: String = {"A": "B", "B": "E", "F": "E", "E": ""}[l]
+			if species() == "orange":
+				to = {"A": "B", "B": "F", "F": "", "E": ""}[l]
 			if to == "" or avail(to) <= 0:
 				mon.erase(id)
 				killed += 1
-				parts.append("%s svanisce" % D.MON[l]["name"])
+				parts.append("%s svanisce" % mdef(l)["name"])
 			else:
 				mon[id]["l"] = to
-				parts.append("%s rimpicciolisce" % D.MON[l]["name"])
+				parts.append("%s rimpicciolisce" % mdef(l)["name"])
 	# 3. dadi per uccidere (comprese le mani)
 	for id in ids:
 		if mon.has(id) and eff[id]["kill"] > 0:
@@ -1619,6 +1714,25 @@ func _apply_effects(eff: Dictionary) -> Dictionary:
 				parts.append("%s resiste (%d)" % [nm, tot])
 	# 4. Frammenti (solo i mostri ancora vivi)
 	for id in ids:
+		if mon.has(id) and eff[id]["frag"] and species() == "purple":
+			# le Cose Viola non fanno frammenti: l'Adulto si divide in 1-3 Giovani, il Giovane in 0-2
+			for s in eff[id]["fsrc"]:
+				used[s] = true
+			var l2: String = mon[id]["l"]
+			if l2 == "E":
+				continue
+			var a2: String = mon[id]["loc"]
+			var nb := rng.randi_range(1, 3) - (1 if l2 == "B" else 0)
+			mon.erase(id)
+			killed += 1
+			var made2 := 0
+			for i in nb:
+				if avail("B") > 0:
+					_add_mon("B", a2)
+					made2 += 1
+			_fx("frag", {"area": a2, "n": made2})
+			parts.append("%s si divide in %d Giovani" % [mdef(l2)["name"], made2])
+			continue
 		if mon.has(id) and eff[id]["frag"]:
 			for s in eff[id]["fsrc"]:
 				used[s] = true
@@ -1935,7 +2049,7 @@ func seen_mons_at(a: String) -> Array:
 
 
 func megadults() -> bool:
-	return opts.get("megadults", false)
+	return opts.get("megadults", false) and species() == "green"
 
 
 func is_mega(id: int, k := "") -> bool:

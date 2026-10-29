@@ -55,7 +55,14 @@ static func crew_tex(k: String) -> Texture2D:
 	return tex("res://assets/counters/%s.png" % k)
 
 
+## Specie di mostri della partita in corso (cambia le pedine delle Cose Arancioni e Viola).
+static var species := "green"
+
 static func mon_tex(l: String) -> Texture2D:
+	if species != "green":
+		var p := "res://assets/counters/%s_%s.png" % [species, D.MON[l]["img"]]
+		if ResourceLoader.exists(p):
+			return tex(p)
 	return tex("res://assets/counters/%s.png" % D.MON[l]["img"])
 
 
