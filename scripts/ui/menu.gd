@@ -4,8 +4,9 @@ extends Control
 
 const D = preload("res://scripts/data/agt_data.gd")
 const MODES := ["Persona", "IA facile", "IA normale", "IA difficile"]
-const SEAT_KEYS := ["crew", "mon"]
+const SEAT_KEYS := ["crew", "mon", "fo"]
 const SEAT_NAMES := ["Equipaggio", "Cose Verdi"]
+const SEAT_NAMES_MUT := ["Capitano", "Cose Verdi", "Primo Ufficiale"]
 const VARIANTS := [
 	["extra_adult", "Un Adulto in più per le Cose Verdi", "Il regolamento lo suggerisce per aiutare le Cose Verdi se perdono troppo spesso."],
 	["beamer2", "Comunicatore a due frequenze", "Variante per aiutare l'Equipaggio: se il primo effetto del Raggio comunicatore delude, si può provare\nl'altra frequenza (un nuovo gettone) e poi scegliere ogni volta il migliore dei due."],
@@ -15,11 +16,11 @@ const VARIANTS := [
 
 var main
 var page: Control
-var modes := {"crew": 0, "mon": 2}
-var names := {"crew": "Equipaggio", "mon": "Cose Verdi"}
+var modes := {"crew": 0, "mon": 2, "fo": 2}
+var names := {"crew": "Equipaggio", "mon": "Cose Verdi", "fo": "Primo Ufficiale"}
 var speed := 1
 var view3d := 1
-var scenario := 0                # 0 = classica, 1 = solitario
+var scenario := 0                # 0 = classica, 1 = solitario, 2 = ammutinamento (3 giocatori)
 var variants := {}
 var msg: Label
 var seats_box: VBoxContainer
@@ -29,8 +30,10 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var st: Dictionary = main.menu_state
 	if not st.is_empty():
-		modes = st["modes"].duplicate()
-		names = st["names"].duplicate()
+		for k in st["modes"]:
+			modes[k] = st["modes"][k]
+		for k in st["names"]:
+			names[k] = st["names"][k]
 		speed = st["speed"]
 		variants = st["variants"].duplicate()
 		view3d = st.get("view3d", 1)
@@ -84,16 +87,21 @@ func _ready() -> void:
 	var hh := UI.heading("Chi gioca", 40)
 	hh.custom_minimum_size.x = 250
 	top.add_child(hh)
-	top.add_child(_segmented("Partita", ["Classica", "Solitario"], scenario, func(k):
+	top.add_child(_segmented("Partita", ["Classica", "Solitario", "Ammutinamento"], scenario, func(k):
 		scenario = k
 		msg.text = ""
-		_refresh_seats(), 200))
+		_refresh_seats(), 196))
 	rv.add_child(top)
 	seats_box = VBoxContainer.new()
 	seats_box.add_theme_constant_override("separation", 10)
 	rv.add_child(seats_box)
 	rv.add_child(HSeparator.new())
 	rv.add_child(UI.heading("Varianti", 34))
+	var vgrid := GridContainer.new()
+	vgrid.columns = 2
+	vgrid.add_theme_constant_override("h_separation", 12)
+	vgrid.add_theme_constant_override("v_separation", 8)
+	rv.add_child(vgrid)
 	for v in VARIANTS:
 		var cb := CheckBox.new()
 		cb.text = v[1]
@@ -102,7 +110,8 @@ func _ready() -> void:
 		cb.add_theme_font_size_override("font_size", 21)
 		var key: String = v[0]
 		cb.toggled.connect(func(on): variants[key] = on)
-		rv.add_child(cb)
+		cb.custom_minimum_size.x = 535
+		vgrid.add_child(cb)
 	rv.add_child(_segmented("Velocità IA", ["Lenta", "Normale", "Veloce", "Istantanea"], speed, func(k): speed = k, 160))
 	rv.add_child(_segmented("Vista", ["2D: il tabellone", "3D: le miniature"], view3d, func(k): view3d = k, 330))
 
@@ -157,7 +166,8 @@ func _store() -> void:
 func _refresh_seats() -> void:
 	for c in seats_box.get_children():
 		c.queue_free()
-	for i in 2:
+	var order := [0, 2, 1] if scenario == 2 else [0, 1]
+	for i in order:
 		var k: String = SEAT_KEYS[i]
 		if scenario == 1 and i == 1:
 			var info := PanelContainer.new()
@@ -172,20 +182,25 @@ func _refresh_seats() -> void:
 			ih.add_child(il)
 			seats_box.add_child(info)
 			continue
-		var col: Color = UI.BLUE_D if i == 0 else UI.GREEN_D
+		var col: Color = UI.BLUE_D if i == 0 else (UI.GREEN_D if i == 1 else Color("#8a3b12"))
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UI.comic_style(col, 12))
 		var hb := HBoxContainer.new()
 		hb.add_theme_constant_override("separation", 14)
 		row.add_child(hb)
-		hb.add_child(UI.icon_rect(UI.crew_tex("captain") if i == 0 else UI.mon_tex("A"), Vector2(80, 80)))
+		var ic: Texture2D = UI.crew_tex("captain") if i == 0 else (UI.mon_tex("A") if i == 1 else UI.crew_tex("first_officer"))
+		var isz := 64 if scenario == 2 else 80
+		hb.add_child(UI.icon_rect(ic, Vector2(isz, isz)))
 		var vb := VBoxContainer.new()
-		vb.custom_minimum_size.x = 330
-		vb.add_child(UI.heading("L'Equipaggio della Znutar" if i == 0 else "Le Cose Verdi", 28, UI.YELLOW if i == 0 else UI.SLIME))
+		vb.custom_minimum_size.x = 346 if scenario == 2 else 330
+		var ttl := "L'Equipaggio della Znutar" if i == 0 else "Le Cose Verdi"
+		if scenario == 2:
+			ttl = ["La squadra del Capitano", "Le Cose Verdi", "La squadra del Primo Uff."][i]
+		vb.add_child(UI.heading(ttl, 26 if scenario == 2 else 28, UI.YELLOW if i == 0 else (UI.SLIME if i == 1 else UI.ORANGE_L)))
 		var le := LineEdit.new()
 		le.text = names[k]
 		le.max_length = 20
-		le.custom_minimum_size = Vector2(300, 42)
+		le.custom_minimum_size = Vector2(300, 38 if scenario == 2 else 42)
 		le.add_theme_font_size_override("font_size", 20)
 		var kk: String = k
 		le.text_changed.connect(func(t): names[kk] = t)
@@ -198,7 +213,7 @@ func _refresh_seats() -> void:
 		for m in MODES.size():
 			var b := Button.new()
 			b.text = MODES[m]
-			b.custom_minimum_size = Vector2(150, 56)
+			b.custom_minimum_size = Vector2(150, 50 if scenario == 2 else 56)
 			b.add_theme_font_size_override("font_size", 19)
 			var on: bool = modes[k] == m
 			b.add_theme_stylebox_override("normal", UI.panel_style(UI.YELLOW if on else Color("#0f2a1a"), UI.INK, 3, 6))
@@ -255,12 +270,12 @@ func _big_button(text: String, w: float, primary := false) -> Button:
 ## Configurazione scelta nel menu (anche quella che, online, viaggia agli altri).
 func _config() -> Dictionary:
 	var seats := []
-	for i in 2:
+	for i in (3 if scenario == 2 else 2):
 		var k: String = SEAT_KEYS[i]
 		var m: int = modes[k]
 		var nm: String = names[k].strip_edges()
 		if nm == "":
-			nm = SEAT_NAMES[i]
+			nm = _seat_names()[i]
 		if scenario == 1 and i == 1:
 			m = 2
 		seats.append({"name": nm, "ai": m != 0, "level": maxi(0, m - 1)})
@@ -272,6 +287,8 @@ func _config() -> Dictionary:
 	if scenario == 1:
 		opts["solo"] = true
 		opts.erase("extra_adult")
+	if scenario == 2:
+		opts["mutiny"] = true
 	return {"seats": seats, "ai_delay": speeds[speed], "opts": opts, "view3d": view3d == 1}
 
 
@@ -313,7 +330,7 @@ func _online_panel() -> void:
 	vb.add_theme_constant_override("separation", 16)
 	box.add_child(vb)
 	vb.add_child(UI.title("Gioca online", 56))
-	var info := UI.label("Chi crea la stanza sceglie qui quale lato gioca: l'altro è per l'amico, che entra con il codice. Le varianti scelte nel menu valgono per tutti e due.", 20, UI.MUTED)
+	var info := UI.label("Chi crea la stanza sceglie qui quale lato gioca: gli altri sono per gli amici, che entrano con il codice. Partita e varianti scelte nel menu valgono per tutti.", 20, UI.MUTED)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.custom_minimum_size = Vector2(760, 0)
 	vb.add_child(info)
@@ -321,7 +338,8 @@ func _online_panel() -> void:
 	on_name = _line("Il tuo nome", 20)
 	on_name.text = str(ses.get("name", ""))
 	vb.add_child(on_name)
-	vb.add_child(_segmented("Tu giochi", SEAT_NAMES, host_side, func(k): host_side = k, 250))
+	host_side = mini(host_side, _seat_names().size() - 1)
+	vb.add_child(_segmented("Tu giochi", _seat_names(), host_side, func(k): host_side = k, 200))
 	var b_create := UI.button("Crea una stanza", 0, 60, 24)
 	b_create.pressed.connect(_online_create)
 	vb.add_child(b_create)
@@ -359,6 +377,10 @@ func _online_panel() -> void:
 		on_lbl.text = "Eri nella stanza %s: premi Entra per rientrare." % ses["room"]
 
 
+func _seat_names() -> Array:
+	return SEAT_NAMES_MUT if scenario == 2 else SEAT_NAMES
+
+
 func _line(ph: String, maxlen: int) -> LineEdit:
 	var le := LineEdit.new()
 	le.placeholder_text = ph
@@ -379,7 +401,7 @@ func _seats_text(room: Dictionary) -> String:
 	for idx in room.get("open", []):
 		var k := str(int(idx))
 		var who := str(seats[k].get("name", "?")) if seats.has(k) and seats[k] is Dictionary else "libero"
-		parts.append("%s: %s" % [SEAT_NAMES[int(idx)], who])
+		parts.append("%s: %s" % [_seat_names()[int(idx)] if int(idx) < _seat_names().size() else "?", who])
 	return ", ".join(parts)
 
 
@@ -388,9 +410,12 @@ func _online_create() -> void:
 	if nm == "":
 		_say("Scrivi il tuo nome.")
 		return
-	var seats := [host_side, 1 - host_side]
-	modes[SEAT_KEYS[0]] = 0
-	modes[SEAT_KEYS[1]] = 0
+	var seats := [host_side]
+	for i in _seat_names().size():
+		if i != host_side:
+			seats.append(i)
+	for i in _seat_names().size():
+		modes[SEAT_KEYS[i]] = 0
 	_store()
 	_say("Creo la stanza…")
 	var net: Net = main.get_net()
@@ -452,7 +477,7 @@ func _lobby_poll(code: String) -> void:
 			if room.get("status", "") == "playing" and room.has("game"):
 				_begin(room["game"], false)
 				return
-			_say("Sei nella stanza [ %s ] (giochi: %s).\nAspetta che chi l'ha creata avvii la partita." % [code, SEAT_NAMES[int(main.lobby["seat"])]])
+			_say("Sei nella stanza [ %s ] (giochi: %s).\nAspetta che chi l'ha creata avvii la partita." % [code, _seat_names()[int(main.lobby["seat"])] if int(main.lobby["seat"]) < _seat_names().size() else "?"])
 		await get_tree().create_timer(2.0).timeout
 
 

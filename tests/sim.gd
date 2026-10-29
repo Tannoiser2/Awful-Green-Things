@@ -28,12 +28,14 @@ func _run(games: int, lc: int, lm: int) -> void:
 		var o := {}
 		for k in OS.get_environment("AGT_OPTS").split(",", false):
 			o[k] = true
-		if o.has("solo"):
-			o["solo"] = true
-		eng.setup({"seats": [{"name": "", "ai": true, "level": lc}, {"name": "", "ai": true, "level": lm}],
+		var seats := [{"name": "", "ai": true, "level": lc}, {"name": "", "ai": true, "level": lm}]
+		if o.has("mutiny"):
+			seats.append({"name": "", "ai": true, "level": lc})
+		eng.setup({"seats": seats,
 			"seed": 1000 + g, "max_turns": 150 if o.has("solo") else 60, "opts": o})
 		eng.ais[0] = AGTAI.new(lc, 50 + g * 7)
 		eng.ais[1] = AGTAI.new(lm, 51 + g * 7)
+		eng.ais[2] = AGTAI.new(lc, 52 + g * 7)
 		eng.changed.connect(_check.bind(eng))
 		if OS.get_environment("AGT_STAT") == "1":
 			eng.log_added.connect(func(t):
@@ -68,7 +70,7 @@ func _run(games: int, lc: int, lm: int) -> void:
 
 func _check(eng: AGTEngine) -> void:
 	for l in eng.D.MON:
-		if eng.mon_count(l) > int(eng.D.MON[l]["limit"]):
+		if eng.mon_count(l) > eng.mlimit(l):
 			_err(eng, "troppi %s" % l)
 	for w in eng.wpn:
 		var x: Dictionary = eng.wpn[w]

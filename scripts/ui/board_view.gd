@@ -261,6 +261,10 @@ func _draw_crew(c: int, r: Rect2) -> void:
 	var sel := sel_pieces.has("c%d" % c)
 	if sel:
 		draw_rect(r.grow(5), UI.YELLOW)
+	if e.mutiny():
+		# ammutinamento: cornice blu per il Capitano, arancione per il Primo Ufficiale
+		var tm := e.team_of(c)
+		draw_rect(r.grow(4), UI.BLUE if tm == 0 else (UI.ORANGE if tm == 2 else UI.MUTED))
 	draw_rect(r.grow(2), UI.INK)
 	var mod := Color.WHITE
 	if not e.awake(c):

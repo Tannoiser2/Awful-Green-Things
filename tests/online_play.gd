@@ -23,6 +23,10 @@ func _run() -> void:
 	var cf := OS.get_environment("AGT_CODEFILE")
 	var menu = main.current
 	menu.speed = 3
+	var need := 2
+	if OS.get_environment("AGT_SCEN") == "mut":
+		menu.scenario = 2
+		need = 3
 	menu._online_panel()
 	menu.on_name.text = "Host" if role == "host" else "Ospite"
 	if role == "host":
@@ -35,7 +39,7 @@ func _run() -> void:
 		f.close()
 		while true:
 			var room: Dictionary = await main.net.room(code)
-			if Net._as_dict(room.get("seats", {})).size() >= 2:
+			if Net._as_dict(room.get("seats", {})).size() >= need:
 				break
 			await _wait(0.5)
 		await menu._online_start()

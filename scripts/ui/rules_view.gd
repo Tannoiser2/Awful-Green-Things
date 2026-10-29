@@ -65,6 +65,13 @@ const OPTIONAL := [
 • [b]La carica finale[/b]: entrando in Controllo danni, su un Ponte, in un'Officina o in Sala macchine, alla fine del turno successivo dell'equipaggio si scopre tutto.
 • [b]Le Cose Verdi[/b] si muovono da sole: [b]crescono tutte[/b] ogni turno (se ci sono pedine libere), inseguono il membro più vicino e attaccano tutte insieme il più debole (il Robot per primo). Mangia la Cosa Verde più grossa che può crescere; «Cresce» fa deporre le uova anche agli Adulti.
 • Niente fuga né autodistruzione: si vince sterminando tutte le Cose Verdi, e i punti sono la costituzione dei sopravvissuti. Si perde se non resta nessuno sveglio."""],
+	["Ammutinamento (3 giocatori)", """Il Primo Ufficiale si è ribellato: la [b]squadra del Capitano[/b] (blu: gli Snudliani gialli, gli Smbaliti, metà dei Redundani, la Mascotte e all'inizio il Robot) tiene la prua e il Ponte n. 1, quella del [b]Primo Ufficiale[/b] (arancione: i Frathm, gli Snudliani verdi e gli altri Redundani) la poppa e il Ponte n. 2. Le due squadre non cooperano.
+• Ogni squadra si dispone nelle sue aree di partenza. Le Cose Verdi sono meno (da 3 Uova, 2 Piccoli e 2 Adulti a 1 Uovo, 3 Piccoli e 3 Adulti; al massimo 8 Adulti, 12 Piccoli, 14 Uova e 15 Frammenti). Un dado decide chi le scopre: 1-2 il Capitano, 3-4 il Primo Ufficiale, 5-6 entrambi con un membro a testa.
+• [b]Turno[/b]: Cose Verdi, poi la squadra del Capitano, poi quella del Primo Ufficiale. Le armi si prendono solo dove non ci sono avversari; i compagni possono scambiarsele. Una Siringa sta in Infermeria e l'altra al Supporto vitale.
+• [b]Combattere fra equipaggi[/b]: a mani nude o con le armi, con effetti fissi: Saldatrice e Stecca 3 dadi per uccidere, Coltello e Acido 4, Carburante 5, Pistola e Granata 5 dadi per stordire, la Siringa dimezza il movimento del bersaglio per un turno; Comunicatore, Estintore, Zgwortz e Recinto non fanno niente. Il Dottore e l'Infermiere con la Siringa possono invece risvegliare un compagno stordito (senza attaccare).
+• [b]Il Robot[/b] obbedisce a chi ha il [b]Telecomando[/b] (in Officina) e lo vede; il [b]Disturbatore[/b] (nell'Officina di poppa) lo blocca se chi lo porta è nella sua area. Senza padrone non si muove e non attacca.
+• Autodistruzione dal proprio Ponte (Capitano, Ufficiale di Macchina o Pilota giallo dal n. 1; Primo Ufficiale, Pilota blu o Ufficiale Operativo dal n. 2). Ogni squadra fugge con le sue scialuppe.
+• [b]Vittoria[/b]: ogni squadra conta la costituzione dei suoi sopravvissuti (a bordo se le Cose Verdi sono sterminate, o tornati a casa dall'Epilogo), senza Robot e Mascotte. Se le Cose Verdi fanno più punti delle due squadre insieme vincono loro, altrimenti vince la squadra con più punti."""],
 ]
 
 var page := 0
@@ -125,7 +132,7 @@ func _fill() -> void:
 	for c in cols.get_children():
 		c.queue_free()
 	var src: Array = SECTIONS if page == 0 else OPTIONAL
-	var half := 5 if page == 0 else 2
+	var half := 5 if page == 0 else 3
 	for part in [src.slice(0, half), src.slice(half)]:
 		var rt := RichTextLabel.new()
 		rt.bbcode_enabled = true

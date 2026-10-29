@@ -439,6 +439,10 @@ func _grab(e: AGTEngine, req: Dictionary) -> int:
 
 
 func _weapon_value(e: AGTEngine, t: String, c: int) -> float:
+	if t == "rcontrol":
+		return 7.0 - float(e.cdef(c)["att"]) * 0.6
+	if t == "jammer":
+		return 2.5 - float(e.cdef(c)["att"]) * 0.6
 	var k := e.effect_of(t)
 	var w: Dictionary = D.WEAPONS[t]
 	var base := 3.0
@@ -731,7 +735,7 @@ func _crew_dest(e: AGTEngine, c: int, paths: Dictionary, doom: bool) -> String:
 				v += _melee_value(e, a, c) * 0.8
 		else:
 			var rng_t: String = D.WEAPONS[t]["range"] if t != "" else "same"
-			if t == "fence" or k == "robot" or rng_t == "same":
+			if t == "fence" or k == "robot" or rng_t in ["same", "none"]:
 				v = _melee_value(e, a, c) * 1.5 - _approach(e, a) * 1.2
 			else:
 				# armi a distanza: una posizione da cui colpire senza stare in mezzo ai mostri
@@ -861,10 +865,61 @@ func _good(k: String) -> bool:
 func _cattack(e: AGTEngine, req: Dictionary) -> Dictionary:
 	var areas: Array = req["areas"]
 	for a in areas:
-		var atk := _plan_area(e, a)
+		var atk := _plan_area(e, a) if not e.mons_at(a).is_empty() else []
+		if atk.is_empty() and e.mutiny() and not req.get("discovery", false):
+			atk = _plan_crew_area(e, a)
 		if not atk.is_empty():
 			return {"area": a, "atk": atk}
 	return {}
+
+
+## Ammutinamento: si attacca un avversario solo se lo si può abbattere con buone probabilità.
+func _plan_crew_area(e: AGTEngine, a: String) -> Array:
+	var cands := e.attackers_for(a)
+	if cands.is_empty():
+		return []
+	var enemies := e.enemies_at(a, int(cands[0][0]))
+	if enemies.is_empty():
+		return []
+	var best := []
+	var bv := 0.0
+	for tg in enemies:
+		if e.crew[tg]["k"] == "robot" and e.team_of(tg) < 0:
+			continue   # il Robot senza padrone fa più comodo intero
+		var con := int(e.cdef(tg)["con"])
+		var atk := []
+		var dice := 0
+		var used := {}
+		for cm in cands:
+			var c: int = cm[0]
+			if used.has(c):
+				continue
+			var dd := 0
+			if cm[1]:
+				var t := e.wtype(e.crew[c]["w"])
+				if D.WEAPONS[t]["kind"] != "single":
+					continue
+				var k: String = D.VS_CREW.get(t, "none")
+				if not k.begins_with("kill"):
+					continue
+				dd = int(k.substr(4))
+			else:
+				if e.crew[c]["loc"] != a:
+					continue
+				dd = int(e.cdef(c)["att"])
+			if dd <= 0:
+				continue
+			used[c] = true
+			atk.append([c, cm[1], tg + D.CREW_T])
+			dice += dd
+		var p := p_at_least(dice, con)
+		var v := p * float(con) / 10.0
+		if e.crew[tg]["k"] == "robot":
+			v *= 0.5
+		if p >= (0.55 if level >= 1 else 0.35) and v > bv:
+			bv = v
+			best = atk
+	return best
 
 
 func _plan_area(e: AGTEngine, a: String) -> Array:
@@ -888,6 +943,8 @@ func _plan_area(e: AGTEngine, a: String) -> Array:
 			var safe := true
 			for s in e.section(a):
 				for x in e.crew_at(s):
+					if e.mutiny() and e.team_of(x) != e.cur_team:
+						continue   # gli avversari nella nube non dispiacciono
 					if t == "grenade" and e.crew[x]["k"] == "robot":
 						continue
 					if t == "fuel" and e.crew[x]["k"] == "robot":

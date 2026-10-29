@@ -94,14 +94,21 @@ func setup(config: Dictionary) -> void:
 	AR = D.areas()
 	crew = {}
 	for i in D.CREW.size():
-		crew[i] = {"k": D.CREW[i]["k"], "loc": "", "st": 0, "w": -1, "state": "ok"}
+		crew[i] = {"k": D.CREW[i]["k"], "loc": "", "st": 0, "w": -1, "state": "ok", "team": 0, "slow": false}
+		if mutiny() and D.MUT_FIRST.has(D.CREW[i]["k"]):
+			crew[i]["team"] = 2
 	wpn = {}
 	var wid := 0
-	for t in D.WEAPON_ORDER:
+	var wlist: Array = D.WEAPON_ORDER.duplicate()
+	if mutiny():
+		wlist.append_array(["rcontrol", "jammer"])
+	for t in wlist:
 		var st: Dictionary = D.WEAPONS[t]["start"]
+		if mutiny() and t == "hypo":
+			st = {"sick": 1, "life": 1}
 		for a in st:
 			for n in int(st[a]):
-				wpn[wid] = {"t": t, "loc": a, "c": -1, "on": false, "out": false}
+				wpn[wid] = {"t": t, "loc": a, "c": -1, "on": false, "out": false, "team": -1}
 				wid += 1
 	cup = []
 	for k in D.CHITS:
@@ -133,6 +140,8 @@ func pname(s: int) -> String:
 	if s < 0 or s >= players.size():
 		return "?"
 	var def: String = "Equipaggio" if s == CREW_SEAT else "Cose Verdi"
+	if mutiny():
+		def = ["Il Capitano", "Cose Verdi", "Il Primo Ufficiale"][s]
 	var n: String = players[s]["name"]
 	return def if n == "" or n == def else "%s (%s)" % [n, def]
 
@@ -303,8 +312,12 @@ func mon_count(l := "") -> int:
 	return n
 
 
+func mlimit(l: String) -> int:
+	return int(D.MUT_LIMIT[l]) if mutiny() else int(D.MON[l]["limit"])
+
+
 func avail(l: String) -> int:
-	return int(D.MON[l]["limit"]) - mon_count(l) - (hidden_mon(l) if not hidden.is_empty() else 0)
+	return mlimit(l) - mon_count(l) - (hidden_mon(l) if not hidden.is_empty() else 0)
 
 
 ## Per l'equipaggio un'area è «calda» se ci sono Adulti o Piccoli svegli.
@@ -419,13 +432,20 @@ func dist(a: String, b: String) -> int:
 # ---- equipaggio: movimento e attacco
 
 func crew_can_act(id: int) -> bool:
+	if mutiny() and team_of(id) != cur_team:
+		return false
 	return on_board(id) and awake(id) and not busy.has(id)
 
 
 func crew_moves(id: int) -> Dictionary:
 	if not crew_can_act(id) or moved.has(id):
 		return {}
-	var r := reach(crew[id]["loc"], int(cdef(id)["mov"]), true)
+	var mv := int(cdef(id)["mov"])
+	if crew[id].get("slow", false):
+		mv = mv / 2
+	if mv <= 0:
+		return {}
+	var r := reach(crew[id]["loc"], mv, true)
 	if discovery:
 		var out := {}
 		for a in r:
@@ -481,6 +501,9 @@ func crew_attack_areas() -> Array:
 
 
 func _has_targets(a: String, id: int, usew: bool) -> bool:
+	if mutiny() and not enemies_at(a, id).is_empty():
+		if not usew or D.WEAPONS[wtype(crew[id]["w"])]["kind"] in ["single", "blast"]:
+			return true
 	if usew and D.WEAPONS[wtype(crew[id]["w"])]["kind"] == "blast":
 		for x in section(a):
 			if not mons_at(x).is_empty():
@@ -568,23 +591,42 @@ func run() -> void:
 		await _monster_turn()
 		if game_over or abort:
 			break
-		await _crew_turn()
+		if mutiny():
+			for t in [0, 2]:
+				cur_team = t
+				if team_crew(t).is_empty():
+					continue
+				await _crew_turn()
+				if game_over or abort:
+					break
+			cur_team = 0
+		else:
+			await _crew_turn()
 	if not abort:
 		_finish()
 
 
 func _setup_crew() -> void:
 	phase = "crew_setup"
-	var options := {}
-	for id in crew:
-		options[id] = cdef(id)["start"]
-	var r = await decide(CREW_SEAT, {"type": "crew_setup", "options": options,
-		"title": "Disponi l'equipaggio nelle aree di partenza"})
-	for id in crew:
-		var a = r.get(id, r.get(str(id), "")) if r is Dictionary else ""
-		if not (a in options[id]):
-			a = options[id][0]
-		crew[id]["loc"] = a
+	for t in ([0, 2] if mutiny() else [0]):
+		cur_team = t
+		var options := {}
+		for id in crew:
+			if mutiny():
+				var tab: Dictionary = D.MUT_CAPTAIN if t == 0 else D.MUT_FIRST
+				if tab.has(crew[id]["k"]):
+					options[id] = tab[crew[id]["k"]]
+			else:
+				options[id] = cdef(id)["start"]
+		var r = await decide(t, {"type": "crew_setup", "options": options,
+			"title": "Disponi la tua squadra nelle aree di partenza" if mutiny() else "Disponi l'equipaggio nelle aree di partenza"})
+		for id in options:
+			var a = r.get(id, r.get(str(id), "")) if r is Dictionary else ""
+			if not (a in options[id]):
+				a = options[id][0]
+			crew[id]["loc"] = a
+		changed.emit()
+	cur_team = 0
 	log_msg("L'equipaggio prende posto a bordo.")
 	changed.emit()
 
@@ -592,7 +634,7 @@ func _setup_crew() -> void:
 func _setup_monsters() -> void:
 	phase = "mon_setup"
 	var p := d6()
-	var pop: Array = D.POPULATION[p - 1]
+	var pop: Array = D.MUT_POP[p - 1] if mutiny() else D.POPULATION[p - 1]
 	var left := {"E": pop[0], "B": pop[1], "A": pop[2]}
 	if opts.get("extra_adult", false):
 		left["A"] += 1
@@ -667,11 +709,14 @@ func _discovery() -> void:
 	moved = {}
 	hot_entry = {}
 	attacked = {}
-	log_msg("Allarme! Uno o due membri dell'equipaggio scoprono le Cose Verdi.")
-	await _crew_moves(2)
-	if not moved.is_empty():
-		phase = "discovery_attack"
-		await _crew_attacks()
+	if mutiny():
+		await _discovery_mut()
+	else:
+		log_msg("Allarme! Uno o due membri dell'equipaggio scoprono le Cose Verdi.")
+		await _crew_moves(2)
+		if not moved.is_empty():
+			phase = "discovery_attack"
+			await _crew_attacks()
 	discovery = false
 	moved = {}
 	hot_entry = {}
@@ -943,7 +988,10 @@ func _crew_turn() -> void:
 	hot_entry = {}
 	attacked = {}
 	busy = {}
-	log_msg("— Turno %d: l'equipaggio —" % turn_no)
+	if mutiny():
+		log_msg("— Turno %d: %s —" % [turn_no, "la squadra del Capitano" if cur_team == 0 else "la squadra del Primo Ufficiale"])
+	else:
+		log_msg("— Turno %d: l'equipaggio —" % turn_no)
 	# 1. prendere le armi
 	phase = "grab"
 	var guard := 0
@@ -952,7 +1000,7 @@ func _crew_turn() -> void:
 		var acts := grab_actions()
 		if acts.is_empty():
 			break
-		var r = await decide(CREW_SEAT, {"type": "grab", "actions": acts, "title": "Prendi, lascia o scambia le armi"})
+		var r = await decide(cur_team, {"type": "grab", "actions": acts, "title": "Prendi, lascia o scambia le armi"})
 		var i := int(r) if (r is int or r is float) else -1
 		if i < 0 or i >= acts.size():
 			break
@@ -981,6 +1029,7 @@ func _crew_turn() -> void:
 				wpn[w]["c"] = -1
 				wpn[w]["loc"] = crew[cid]["loc"]
 				wpn[w]["on"] = true
+				wpn[w]["team"] = cur_team
 				crew[cid]["w"] = -1
 				log_msg("%s attiva il Recinto elettrico in %s." % [cname(cid), area_name(crew[cid]["loc"])])
 	if sd_left > 0:
@@ -995,8 +1044,11 @@ func _crew_turn() -> void:
 			log_msg("%s avvia l'AUTODISTRUZIONE: la Znutar esploderà alla fine del terzo turno dell'equipaggio!" % cname(cid))
 			_fx("alarm", {})
 	for cid in crew:
+		if mutiny() and team_of(cid) != cur_team and crew[cid]["k"] != "robot":
+			continue
 		if crew[cid]["st"] > 0 and crew[cid]["st"] < turn_no:
 			crew[cid]["st"] = 0
+		crew[cid]["slow"] = false
 	busy = {}
 	moved = {}
 	hot_entry = {}
@@ -1013,14 +1065,19 @@ func grab_actions() -> Array:
 	for cid in board_crew():
 		if not awake(cid):
 			continue
+		if mutiny() and team_of(cid) != cur_team:
+			continue
 		var a: String = crew[cid]["loc"]
 		var k: String = crew[cid]["k"]
 		var w: int = crew[cid]["w"]
-		if k != "mascot":
+		var contested := mutiny() and not enemies_at(a, cid).is_empty()
+		if k != "mascot" and not contested:
 			var seen := {}
 			for fw in weapons_at(a):
 				var t := wtype(fw)
 				if seen.has(t):
+					continue
+				if D.WEAPONS[t]["kind"] == "device" and k == "robot":
 					continue
 				seen[t] = true
 				var lab := "%s prende %s" % [cdef(cid)["short"], wname(t)]
@@ -1034,6 +1091,10 @@ func grab_actions() -> Array:
 			for o in crew_at(a):
 				if o == cid or o < 0 or not awake(o) or crew[o]["k"] == "mascot":
 					continue
+				if mutiny() and team_of(o) != cur_team:
+					continue
+				if crew[o]["k"] == "robot" and D.WEAPONS[wtype(w)]["kind"] == "device":
+					continue
 				if crew[o]["w"] >= 0 and o < cid:
 					continue   # lo scambio fra due armati compare una volta sola
 				var lab2 := "%s dà %s a %s" % [cdef(cid)["short"], wname(wtype(w)), cdef(o)["short"]]
@@ -1042,7 +1103,7 @@ func grab_actions() -> Array:
 				out.append({"a": "swap", "c": cid, "o": o, "label": lab2})
 	for fw in wpn:
 		var x: Dictionary = wpn[fw]
-		if x["t"] == "fence" and x["on"] and not x["out"] and x["c"] == -1:
+		if x["t"] == "fence" and x["on"] and not x["out"] and x["c"] == -1 and (not mutiny() or int(x.get("team", -1)) == cur_team):
 			out.append({"a": "off", "w": fw, "label": "Spegni a distanza il Recinto in %s" % area_name(x["loc"])})
 	return out
 
@@ -1102,7 +1163,7 @@ func _crew_moves(limit: int) -> void:
 			break
 		var req := {"type": "cmove", "discovery": discovery,
 			"title": "Scoperta! Muovi 1 o 2 membri in un'area con le Cose Verdi" if discovery else "Muovi l'equipaggio"}
-		var r = await decide(CREW_SEAT, req)
+		var r = await decide(cur_team, req)
 		if not (r is Dictionary) or r.is_empty():
 			if discovery and moved.is_empty() and any:
 				continue   # la scoperta è obbligatoria
@@ -1130,7 +1191,15 @@ func special_actions(cid: int) -> Array:
 		out.append({"act": "fence", "c": cid, "label": "Monta il Recinto qui"})
 	if solo():
 		return out
-	if crew[cid]["k"] in D.SD_CREW and a in D.BRIDGES and sd_left < 0 and not "sd" in busy.values():
+	var can_sd: bool = crew[cid]["k"] in D.SD_CREW and a in D.BRIDGES
+	if mutiny():
+		can_sd = D.MUT_SD.has(a) and crew[cid]["k"] in D.MUT_SD[a]
+		# il Dottore e l'Infermiere con la Siringa risvegliano un compagno stordito
+		if crew[cid]["k"] in ["doc", "medic"] and w >= 0 and wtype(w) == "hypo" and not attacked.has(cid):
+			for o in crew_at(a):
+				if o != cid and team_of(o) == cur_team and not awake(o) and crew[o]["k"] != "robot":
+					out.append({"act": "heal", "c": cid, "t": o, "label": "Siringa: risveglia %s" % cdef(o)["short"]})
+	if can_sd and sd_left < 0 and not "sd" in busy.values():
 		out.append({"act": "sd", "c": cid, "label": "Avvia l'autodistruzione"})
 	if D.BOATS.has(a) and not launched.has(a):
 		out.append({"act": "escape", "b": a, "c": cid, "label": "Fuggi con %s" % D.BOATS[a]["name"]})
@@ -1144,6 +1213,17 @@ func _apply_cmove(r: Dictionary) -> void:
 		return
 	var cid := int(r.get("c", -1))
 	if not crew.has(cid):
+		return
+	if act == "heal":
+		var t := int(r.get("t", -1))
+		for s in special_actions(cid):
+			if s["act"] == "heal" and int(s["t"]) == t:
+				crew[t]["st"] = 0
+				moved[cid] = true
+				attacked[cid] = true
+				log_msg("%s usa la Siringa: %s si riprende." % [cname(cid), cname(t)])
+				changed.emit()
+				return
 		return
 	if act == "fence" or act == "sd":
 		var ok := false
@@ -1191,7 +1271,7 @@ func _escape(b: String, ids_in: Array) -> void:
 	var ids := []
 	for x in ids_in:
 		var id := int(x)
-		if on_board(id) and awake(id) and crew[id]["loc"] == b and not ids.has(id):
+		if on_board(id) and awake(id) and crew[id]["loc"] == b and not ids.has(id) and (not mutiny() or team_of(id) == cur_team):
 			ids.append(id)
 	if ids.is_empty() or not boat_room(b, ids):
 		return
@@ -1209,7 +1289,7 @@ func _escape(b: String, ids_in: Array) -> void:
 		crew[id]["state"] = "boat"
 		crew[id]["loc"] = ""
 		names.append(cdef(id)["short"])
-	boats.append({"b": b, "crew": ids, "survivors": [], "fate": ""})
+	boats.append({"b": b, "crew": ids, "survivors": [], "fate": "", "team": cur_team})
 	log_msg("FUGA! %s parte con a bordo: %s." % [D.BOATS[b]["name"].capitalize(), ", ".join(names)])
 	_fx("escape", {"b": b})
 	changed.emit()
@@ -1223,7 +1303,7 @@ func _crew_attacks() -> void:
 		var areas := crew_attack_areas()
 		if areas.is_empty():
 			break
-		var r = await decide(CREW_SEAT, {"type": "cattack", "areas": areas, "discovery": discovery,
+		var r = await decide(cur_team, {"type": "cattack", "areas": areas, "discovery": discovery,
 			"title": "Attacca le Cose Verdi"})
 		if not (r is Dictionary) or r.is_empty():
 			break
@@ -1386,13 +1466,28 @@ func _apply_cattack(r: Dictionary) -> void:
 			if kind == "fence":
 				continue
 		if kind in ["hand", "single"]:
-			if not mon.has(tgt) or mon[tgt]["loc"] != x:
+			if tgt >= D.CREW_T:
+				var tc := tgt - D.CREW_T
+				if not mutiny() or not crew.has(tc) or not (tc in enemies_at(x, cid)):
+					continue
+			elif not mon.has(tgt) or mon[tgt]["loc"] != x:
 				continue
+		elif kind == "device":
+			continue
 		seen[cid] = true
 		entries.append({"c": cid, "usew": usew, "tgt": tgt, "kind": kind, "t": wtype(crew[cid]["w"]) if usew else ""})
 	if entries.is_empty():
 		return
 	last_area = x
+	var vs_crew := entries.filter(func(e): return e["kind"] in ["hand", "single"] and int(e["tgt"]) >= D.CREW_T)
+	if not vs_crew.is_empty():
+		entries = entries.filter(func(e): return not vs_crew.has(e))
+		_attack_crew(x, vs_crew)
+		for e in vs_crew:
+			attacked[e["c"]] = true
+		if entries.is_empty():
+			changed.emit()
+			return
 	# gettoni per le armi non ancora provate
 	var untried := []
 	for e in entries:
@@ -1528,6 +1623,157 @@ func _apply_cattack(r: Dictionary) -> void:
 			else:
 				log_msg("   %s sopravvive all'esplosione (%d)." % [cname(cid), tot])
 	changed.emit()
+
+
+# ================================================================ ammutinamento (3 giocatori)
+## 3-4 Player Rules v1.1: la squadra del Capitano (posto 0) contro quella del Primo Ufficiale (posto 2),
+## con le Cose Verdi (posto 1) come nemico comune. Le squadre non cooperano e possono combattersi.
+
+var cur_team := 0         # squadra di turno (posto 0 o 2)
+
+
+func mutiny() -> bool:
+	return opts.get("mutiny", false)
+
+
+## Squadra di un membro (0 Capitano, 2 Primo Ufficiale); il Robot è di chi lo comanda (-1 nessuno).
+func team_of(id: int) -> int:
+	if not mutiny():
+		return 0
+	if crew[id]["k"] == "robot":
+		return robot_ctrl()
+	return int(crew[id]["team"])
+
+
+func team_crew(t: int) -> Array:
+	return board_crew().filter(func(c): return team_of(c) == t)
+
+
+## Chi comanda il Robot: chi ha il telecomando e lo vede, se nessun avversario col disturbatore gli sta accanto.
+func robot_ctrl() -> int:
+	var rob := robot_id()
+	if rob < 0 or not on_board(rob):
+		return -1
+	var ra: String = crew[rob]["loc"]
+	var ctrl := -1
+	for w in wpn:
+		if wpn[w]["t"] == "rcontrol" and int(wpn[w]["c"]) >= 0:
+			var h: int = wpn[w]["c"]
+			if on_board(h) and awake(h) and ra in los(crew[h]["loc"]):
+				ctrl = int(crew[h]["team"])
+	if ctrl < 0:
+		return -1
+	for w in wpn:
+		if wpn[w]["t"] == "jammer" and int(wpn[w]["c"]) >= 0:
+			var j: int = wpn[w]["c"]
+			if on_board(j) and crew[j]["loc"] == ra and int(crew[j]["team"]) != ctrl:
+				return -1
+	return ctrl
+
+
+## Avversari nell'area (il Robot senza padrone si può attaccare ma non conta per prendere le armi).
+func enemies_at(a: String, cid: int, neutral := true) -> Array:
+	var me := team_of(cid) if crew[cid]["k"] != "robot" else robot_ctrl()
+	var out := []
+	for o in crew_at(a):
+		var t := team_of(o)
+		if t == me:
+			continue
+		if t < 0 and not neutral:
+			continue
+		out.append(o)
+	return out
+
+
+## Scoperta: un dado decide chi scopre le Cose Verdi (1-2 il Capitano, 3-4 il Primo Ufficiale, 5-6 entrambi,
+## con un solo membro a testa).
+func _discovery_mut() -> void:
+	var r := d6()
+	var who := [0] if r <= 2 else ([2] if r <= 4 else [0, 2])
+	_fx("dice", {"dice": [r], "info": "Chi scopre le Cose Verdi", "total": r})
+	var can := {}
+	for t in [0, 2]:
+		cur_team = t
+		can[t] = false
+		for c in team_crew(t):
+			if not crew_moves(c).is_empty():
+				can[t] = true
+	who = who.filter(func(t): return can[t])
+	if who.is_empty():
+		who = [0, 2].filter(func(t): return can[t]).slice(0, 1)
+	var names := {0: "la squadra del Capitano", 2: "la squadra del Primo Ufficiale"}
+	log_msg("Allarme! Tiro %d: scopre le Cose Verdi %s." % [r, " e ".join(who.map(func(t): return names[t])) if not who.is_empty() else "nessuno"])
+	var limit := 1 if who.size() == 2 else 2
+	for t in who:
+		cur_team = t
+		var before := moved.size()
+		await _crew_moves(before + limit)
+	if not moved.is_empty():
+		phase = "discovery_attack"
+		for t in who:
+			cur_team = t
+			await _crew_attacks()
+	cur_team = 0
+
+
+## Attacchi contro l'equipaggio avversario: dadi a mani nude e armi con effetto fisso.
+func _attack_crew(x: String, entries: Array) -> void:
+	var kill := {}
+	var stun := {}
+	var slow := {}
+	var desc := []
+	for e in entries:
+		var cid: int = e["c"]
+		var tg: int = int(e["tgt"]) - D.CREW_T
+		if not on_board(tg) or crew[tg]["loc"] != x:
+			continue
+		if not e["usew"]:
+			kill[tg] = kill.get(tg, 0) + int(cdef(cid)["att"])
+			desc.append("%s a mani nude su %s" % [cdef(cid)["short"], cdef(tg)["short"]])
+			continue
+		var t: String = e["t"]
+		var k: String = D.VS_CREW.get(t, "none")
+		desc.append("%s usa %s su %s" % [cdef(cid)["short"], wname(t), cdef(tg)["short"]])
+		if k.begins_with("kill"):
+			kill[tg] = kill.get(tg, 0) + int(k.substr(4))
+		elif k == "stun5":
+			stun[tg] = stun.get(tg, 0) + 5
+		elif k == "slow":
+			slow[tg] = true
+	if desc.is_empty():
+		return
+	log_msg("Ammutinamento in %s: %s." % [area_name(x), "; ".join(desc)])
+	_fx("attack", {"area": x, "crew": entries.map(func(e): return e["c"])})
+	for tg in kill:
+		var tot := _roll_show(kill[tg], "%d dadi contro %s (cost. %d)" % [kill[tg], cname(tg), cdef(tg)["con"]])
+		if tot >= int(cdef(tg)["con"]):
+			log_msg("   %s cade (%d)!" % [cname(tg), tot])
+			_crew_dies(tg)
+			_fx("kill_crew", {"c": tg, "area": x})
+		else:
+			log_msg("   %s resiste (%d)." % [cname(tg), tot])
+	for tg in stun:
+		if not on_board(tg) or crew[tg]["k"] == "robot":
+			continue
+		var tot := _roll_show(stun[tg], "%d dadi per stordire %s" % [stun[tg], cname(tg)])
+		if tot >= int(cdef(tg)["con"]):
+			crew[tg]["st"] = turn_no
+			log_msg("   %s è stordito (%d)." % [cname(tg), tot])
+		else:
+			log_msg("   %s non si stordisce (%d)." % [cname(tg), tot])
+	for tg in slow:
+		if on_board(tg) and crew[tg]["k"] != "robot":
+			crew[tg]["slow"] = true
+			log_msg("   La Siringa intontisce %s: al prossimo turno si muove della metà." % cname(tg))
+
+
+## Punti di una squadra: costituzione dei vivi a bordo (senza Robot e Mascotte).
+func team_aboard(t: int) -> float:
+	var pts := 0.0
+	for c in board_crew():
+		if int(crew[c]["team"]) == t and not (crew[c]["k"] in ["robot", "mascot"]):
+			pts += float(cdef(c)["con"])
+	return pts
 
 
 # ================================================================ solitario (Capitano Yid)
@@ -1917,6 +2163,10 @@ func _check_end() -> void:
 			vp = [0.0, D.VP_TAKEOVER]
 			_end("mon", "Nessuno è rimasto sveglio: le Cose Verdi tornano a dormire con la dispensa piena.")
 		return
+	if mon.is_empty() and mutiny():
+		log_msg("Le Cose Verdi sono state sterminate!")
+		_epilogue_and_end("exterminated", 0.0)
+		return
 	if mon.is_empty():
 		var pts := 0.0
 		for cid in board_crew():
@@ -1925,9 +2175,14 @@ func _check_end() -> void:
 		log_msg("Le Cose Verdi sono state sterminate!")
 		_epilogue_and_end("exterminated", pts)
 		return
-	if board_crew().is_empty():
+	var nobody: bool = board_crew().is_empty()
+	if mutiny() and not nobody and board_crew().filter(func(c): return not (crew[c]["k"] in ["robot", "mascot"])).is_empty():
+		nobody = true   # restano solo il Robot senza padrone e la Mascotte
+		for c in board_crew():
+			_crew_dies(c)
+	if nobody:
 		if boats.is_empty():
-			vp = [0.0, D.VP_TAKEOVER]
+			vp = [0.0, D.VP_TAKEOVER, 0.0] if mutiny() else [0.0, D.VP_TAKEOVER]
 			_end("mon", "Le Cose Verdi si sono prese la Znutar: tutto l'equipaggio è stato divorato.")
 		else:
 			if sd_left > 0:
@@ -1979,7 +2234,7 @@ func _epilogue_boat(bt: Dictionary) -> void:
 		var r := 0
 		match step:
 			1:
-				var c := await pick(CREW_SEAT, "epi1", "%s: che rotta?" % bname.capitalize(),
+				var c := await pick(int(bt.get("team", 0)), "epi1", "%s: che rotta?" % bname.capitalize(),
 					["Dritti verso Snudl-1", "Verso l'ultimo pianeta visitato"], {"boat": bt["b"]})
 				step = 7 if c == 0 else 3
 			2:
@@ -1992,7 +2247,7 @@ func _epilogue_boat(bt: Dictionary) -> void:
 				log_msg("   Atterraggio su un mondo già esplorato (%d)." % r)
 				step = 4 if r <= 4 else 6
 			4:
-				var c2 := await pick(CREW_SEAT, "epi4", "%s: indigeni ostili! Che fare?" % bname.capitalize(),
+				var c2 := await pick(int(bt.get("team", 0)), "epi4", "%s: indigeni ostili! Che fare?" % bname.capitalize(),
 					["Combattere", "Scappare"], {"boat": bt["b"]})
 				step = 5 if c2 == 0 else 8
 			5:
@@ -2046,7 +2301,7 @@ func _epilogue_boat(bt: Dictionary) -> void:
 				step = 6 if r <= 3 else 15
 			14:
 				years += 4
-				var c3 := await pick(CREW_SEAT, "epi14", "%s: quattro anni di viaggio, le scorte finiscono. Rotta?" % bname.capitalize(),
+				var c3 := await pick(int(bt.get("team", 0)), "epi14", "%s: quattro anni di viaggio, le scorte finiscono. Rotta?" % bname.capitalize(),
 					["Verso Snudl-1", "Verso un mondo già esplorato"], {"boat": bt["b"]})
 				step = 2 if c3 == 0 else 3
 			15:
@@ -2119,7 +2374,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 		var set_low := false
 		match step:
 			1:
-				var c := await pick(CREW_SEAT, "alt1", "%s: che rotta?" % bn,
+				var c := await pick(int(bt.get("team", 0)), "alt1", "%s: che rotta?" % bn,
 					["Dritti verso Snudl-1", "Verso l'ultimo pianeta visitato", "Verso un sistema inesplorato vicino"], x)
 				step = [33, 19, 30][clampi(c, 0, 2)]
 			2:
@@ -2138,7 +2393,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				else:
 					intelligent = true
 					log_msg("   Segni di vita intelligente!")
-				var c2 := await pick(CREW_SEAT, "alt4", "%s: %s Che fare?" % [bn, "alieni ostili!" if step == 4 else "vita intelligente!"],
+				var c2 := await pick(int(bt.get("team", 0)), "alt4", "%s: %s Che fare?" % [bn, "alieni ostili!" if step == 4 else "vita intelligente!"],
 					["Evitare il contatto", "Attaccare", "Tentare di comunicare"], x)
 				step = [35, 5, 24][clampi(c2, 0, 2)]
 			5:
@@ -2224,7 +2479,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				r = d10()
 				step = _tab(r, [[1, 2], [3, 7], [6, 32], [10, 14]])
 			16:
-				var c3 := await pick(CREW_SEAT, "alt16", "%s: un relitto alieno alla deriva!" % bn, ["Passare oltre", "Abbordarlo"], x)
+				var c3 := await pick(int(bt.get("team", 0)), "alt16", "%s: un relitto alieno alla deriva!" % bn, ["Passare oltre", "Abbordarlo"], x)
 				step = 30 if c3 == 0 else 25
 			17:
 				r = d10() + (1 if _has_k(people, "eng_officer") else 0) + (2 if _has_k(people, "engineer") else 0)
@@ -2296,11 +2551,11 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				else:
 					step = 26
 			26:
-				var c4 := await pick(CREW_SEAT, "alt26", "%s: i computer del relitto sono stranamente alieni." % bn,
+				var c4 := await pick(int(bt.get("team", 0)), "alt26", "%s: i computer del relitto sono stranamente alieni." % bn,
 					["Andarsene", "Provare a usarli"], x)
 				step = 30 if c4 == 0 else 28
 			27:
-				var c5 := await pick(CREW_SEAT, "alt27", "%s: un antico portale temporale!" % bn, ["Volare via", "Attivare il portale"], x)
+				var c5 := await pick(int(bt.get("team", 0)), "alt27", "%s: un antico portale temporale!" % bn, ["Volare via", "Attivare il portale"], x)
 				step = 7 if c5 == 0 else 31
 			28:
 				r = d10() + (1 if _has_k(people, "technician") else 0) + (2 if _has_k(people, "first_officer") else 0)
@@ -2395,6 +2650,7 @@ func _finish() -> void:
 		phase = "epilogue"
 		changed.emit()
 		var home := 0.0
+		var th := {0: 0.0, 2: 0.0}
 		for bt in boats:
 			if opts.get("alt_epilogue", false):
 				await _epilogue_alt(bt)
@@ -2404,26 +2660,61 @@ func _finish() -> void:
 			for id in bt["survivors"]:
 				if not (crew[id]["k"] in ["robot", "mascot"]):
 					home += float(cdef(id)["con"]) * mult
-		match kind:
-			"exterminated":
-				vp = [float(_pending_end["aboard"]) + home, D.VP_TAKEOVER if not boats.is_empty() else 0.0]
-				winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
-				end_reason = "L'equipaggio ha sterminato le Cose Verdi."
-			"sd":
-				vp = [home, D.VP_SELFDESTRUCT]
-				winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
-				end_reason = "La Znutar è esplosa: le Cose Verdi sono distrutte."
-			"escape":
-				vp = [home, D.VP_TAKEOVER]
-				winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
-				end_reason = "L'equipaggio ha abbandonato la nave alle Cose Verdi."
+					th[int(crew[id]["team"])] += float(cdef(id)["con"]) * mult
+		if mutiny():
+			_finish_mutiny(kind, th)
+		else:
+			match kind:
+				"exterminated":
+					vp = [float(_pending_end["aboard"]) + home, D.VP_TAKEOVER if not boats.is_empty() else 0.0]
+					winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
+					end_reason = "L'equipaggio ha sterminato le Cose Verdi."
+				"sd":
+					vp = [home, D.VP_SELFDESTRUCT]
+					winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
+					end_reason = "La Znutar è esplosa: le Cose Verdi sono distrutte."
+				"escape":
+					vp = [home, D.VP_TAKEOVER]
+					winner = "crew" if vp[0] > vp[1] else ("mon" if vp[1] > vp[0] else "draw")
+					end_reason = "L'equipaggio ha abbandonato la nave alle Cose Verdi."
 		log_msg("■ " + end_reason)
-	var wtxt := {"crew": "Vince l'Equipaggio!", "mon": "Vincono le Cose Verdi!", "draw": "Pareggio."}
-	log_msg("Punti vittoria: Equipaggio %s, Cose Verdi %s. %s" % [_fmt(vp[0]), _fmt(vp[1]), wtxt.get(winner, "")])
+	var wtxt := {"crew": "Vince l'Equipaggio!", "mon": "Vincono le Cose Verdi!", "draw": "Pareggio.",
+		"cap": "Vince il Capitano!", "fo": "Vince il Primo Ufficiale!"}
+	if mutiny() and vp.size() >= 3:
+		log_msg("Punti vittoria: Capitano %s, Primo Ufficiale %s, Cose Verdi %s. %s" % [_fmt(vp[0]), _fmt(vp[2]), _fmt(vp[1]), wtxt.get(winner, "")])
+	else:
+		log_msg("Punti vittoria: Equipaggio %s, Cose Verdi %s. %s" % [_fmt(vp[0]), _fmt(vp[1]), wtxt.get(winner, "")])
 	phase = "fine_partita"
 	result = {"winner": winner, "reason": end_reason, "vp": vp}
 	changed.emit()
 	game_ended.emit(result)
+
+
+func _finish_mutiny(kind: String, th: Dictionary) -> void:
+	var cap: float = th[0] + team_aboard(0)
+	var fo: float = th[2] + team_aboard(2)
+	var m := 0.0
+	match kind:
+		"exterminated":
+			end_reason = "Le Cose Verdi sono state sterminate."
+		"sd":
+			m = D.VP_SELFDESTRUCT
+			end_reason = "La Znutar è esplosa: le Cose Verdi sono distrutte."
+		"escape":
+			m = D.VP_TAKEOVER
+			end_reason = "Gli ammutinati e i lealisti hanno abbandonato la nave alle Cose Verdi."
+	vp = [cap, m, fo]
+	if m > cap + fo:
+		winner = "mon"
+		end_reason += " Le Cose Verdi fanno più punti delle due squadre insieme: si parla dell'ammutinamento per anni."
+	elif cap > fo:
+		winner = "cap"
+		end_reason += " Il Capitano denuncia l'ammutinamento e gli ammutinati finiscono sotto processo."
+	elif fo > cap:
+		winner = "fo"
+		end_reason += " La gente sta con il Primo Ufficiale: il Capitano va davanti alla corte marziale."
+	else:
+		winner = "draw"
 
 
 static func _fmt(v: float) -> String:

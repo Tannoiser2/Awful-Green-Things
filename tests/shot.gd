@@ -58,6 +58,10 @@ func _run() -> void:
 	if mode == "solo":
 		o["solo"] = true
 		seats[1]["ai"] = true
+	if mode == "mut":
+		o["mutiny"] = true
+		seats[0]["ai"] = false
+		seats.append({"name": "Primo Ufficiale", "ai": true, "level": 1})
 	for k in OS.get_environment("AGT_OPTS").split(",", false):
 		o[k] = true
 	main.start_game({"seats": seats, "ai_delay": 0.0, "opts": o, "view3d": OS.get_environment("AGT_2D") != "1",

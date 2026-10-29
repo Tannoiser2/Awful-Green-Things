@@ -494,6 +494,25 @@ func _decorate(node: Node3D, kind: String, id) -> void:
 		held.scale = Vector3.ONE * 0.6
 		held.position = Vector3(0.24, 0.0, 0.2)
 		node.add_child(held)
+	# ammutinamento: un anello sotto la basetta col colore della squadra
+	if kind == "c" and e.mutiny():
+		var tm := e.team_of(id)
+		var tc: Color = UI.BLUE if tm == 0 else (UI.ORANGE if tm == 2 else UI.MUTED)
+		var sq: MeshInstance3D = node.get_node_or_null("squadra")
+		if sq == null:
+			sq = MeshInstance3D.new()
+			sq.name = "squadra"
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.33
+			cm.bottom_radius = 0.33
+			cm.height = 0.02
+			sq.mesh = cm
+			var sm := StandardMaterial3D.new()
+			sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			sq.material_override = sm
+			sq.position.y = 0.006
+			node.add_child(sq)
+		(sq.material_override as StandardMaterial3D).albedo_color = tc
 	# anello di selezione
 	var ring := node.get_node_or_null("anello")
 	var sel: bool = sel_pieces.get(kind + str(id), false) == true

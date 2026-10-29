@@ -30,6 +30,10 @@ repository è pubblico).
 - **Solitario** (Solitaire Rules v1.1): il Capitano Yid da solo contro le Cose Verdi in letargo, nascoste sotto
   pedine coperte insieme all'equipaggio prigioniero; allarme, risveglio spontaneo, carica finale e Cose Verdi
   che si muovono da sole.
+- **Ammutinamento** per 3 giocatori (3-4 Player Rules v1.1): la squadra del Capitano contro quella del Primo
+  Ufficiale, con le Cose Verdi nemico comune; combattimento fra equipaggi con gli effetti fissi delle armi,
+  Telecomando e Disturbatore del Robot, Siringa che risveglia i compagni, autodistruzione dal proprio Ponte,
+  punteggio per squadra. Si gioca anche online in tre.
 - **Vista 3D** (predefinita) con le **miniature stampate in 3D** del modulo (tutto l'equipaggio, 8 Adulti,
   8 Piccoli, 6 Uova, 3 Frammenti e le 12 armi), colorate come le pedine: basetta crema per l'equipaggio,
   gialla per le Cose Verdi, blu per le armi. Si passa alla vista 2D del tabellone dal menu o con **Vista 2D/3D**.
@@ -79,6 +83,11 @@ semplifica le mesh per la versione web, separa la basetta dalla figura e le colo
 - Solitario: dei 73 mostri del regolamento le pedine del gioco sono 71 (12 Adulti, 18 Piccoli, 19 Uova,
   22 Frammenti); le pedine avanzate vanno in Sala macchine. Escono l'Estintore dell'Officina di poppa e il
   Comunicatore del Sensore n. 2. Non c'è la regola facoltativa della fuga col Disco.
+- Ammutinamento: il turno è Cose Verdi, Capitano, Primo Ufficiale (niente secondo turno dei mostri, che serve
+  solo con un quarto giocatore). Se tutte e due le squadre scoprono le Cose Verdi attaccano una dopo l'altra.
+  Sterminate le Cose Verdi la partita finisce e contano i sopravvissuti di ogni squadra (al posto delle
+  rese). Il Disturbatore è sempre acceso; il Recinto avversario si può smontare senza tiro. Il 4° giocatore
+  (le Cose Arancioni o Viola) non c'è.
 
 ## Struttura
 ```

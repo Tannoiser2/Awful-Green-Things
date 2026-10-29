@@ -64,8 +64,30 @@ const WEAPONS := {
 	"fuel": {"name": "Tanica di carburante", "short": "Carburante", "n": 3, "start": {"fuel1": 2, "fuel2": 1}, "range": "adj", "kind": "blast", "back": ["fuel1", "fuel2"]},
 	"pistol": {"name": "Pistola stordente", "short": "Pistola", "n": 2, "start": {"bridge1": 1, "bridge2": 1}, "range": "los", "kind": "single"},
 	"torch": {"name": "Saldatrice", "short": "Saldatrice", "n": 2, "start": {"mshop": 1, "aft_ms": 1}, "range": "same", "kind": "single"},
+	# solo nell'ammutinamento (non sono in WEAPON_ORDER): il telecomando e il disturbatore del Robot
+	"rcontrol": {"name": "Telecomando del Robot", "short": "Telecomando", "n": 1, "start": {"mshop": 1}, "range": "none", "kind": "device"},
+	"jammer": {"name": "Disturbatore del Robot", "short": "Disturbatore", "n": 1, "start": {"aft_ms": 1}, "range": "none", "kind": "device"},
 }
 const WEAPON_ORDER := ["acid", "zgwortz", "beamer", "fence", "extinguisher", "grenade", "hypo", "knife", "poolstick", "fuel", "pistol", "torch"]
+
+## Ammutinamento (3-4 Player Rules v1.1): le due squadre, con le aree di partenza.
+const MUT_CAPTAIN := {"captain": ["bridge1", "captain"], "comm_officer": ["bridge1", "computer"], "eng_officer": ["mshop", "officers"],
+	"supply_officer": ["store", "wardroom"], "doc": ["life", "wardroom"], "cook": ["galley", "wardroom"], "engineer": ["mshop", "sensor1"],
+	"machinist": ["mshop", "sensor1"], "coxswain": ["wardroom", "life"], "pilot_y": ["officers", "crew_q_nw"], "mascot": ["captain"],
+	"robot": ["mshop"]}
+const MUT_FIRST := {"first_officer": ["bridge2", "engine"], "ops_officer": ["engine", "aft_ms"], "medic": ["sick", "hospital"],
+	"sparks": ["bridge2", "sensor2"], "sarge": ["pool", "mess"], "marine_g": ["pool", "sick"], "marine_b": ["pool", "crew_q_ne"],
+	"yeoman": ["bridge2", "crew_q_ne"], "technician": ["sensor2", "aft_ms"], "pilot_b": ["pool", "mess"]}
+## Popolazione iniziale (Uova, Piccoli, Adulti) per il tiro di un dado, e pedine disponibili.
+const MUT_POP := [[3, 2, 2], [3, 2, 2], [2, 2, 3], [2, 2, 3], [1, 3, 3], [1, 3, 3]]
+const MUT_LIMIT := {"A": 8, "B": 12, "E": 14, "F": 15}
+## Autodistruzione: ognuno dal proprio Ponte.
+const MUT_SD := {"bridge1": ["captain", "eng_officer", "pilot_y"], "bridge2": ["first_officer", "pilot_b", "ops_officer"]}
+## Effetto delle armi sull'equipaggio avversario (fisso). "slow" = la Siringa dimezza il movimento.
+const VS_CREW := {"torch": "kill3", "pistol": "stun5", "fuel": "kill5", "grenade": "stun5", "beamer": "none", "hypo": "slow",
+	"poolstick": "kill3", "zgwortz": "none", "extinguisher": "none", "fence": "none", "knife": "kill4", "acid": "kill4"}
+## Bersagli dell'equipaggio avversario negli attacchi: id del membro + CREW_T.
+const CREW_T := 1000
 
 ## Gettoni effetto (15 nella tazza).
 const CHITS := {

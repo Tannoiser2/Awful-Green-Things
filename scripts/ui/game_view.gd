@@ -303,7 +303,7 @@ func _refresh() -> void:
 	if engine.phase in ["grow", "mmove", "mattack", "mon_setup"]:
 		who = engine.pname(1)
 	elif engine.phase != "fine_partita":
-		who = engine.pname(0)
+		who = engine.pname(engine.cur_team if engine.mutiny() else 0)
 	top_lbl.text = "Turno %d · %s%s" % [maxi(engine.turn_no, 0), ph.get(engine.phase, engine.phase), (" · " + who) if who != "" else ""]
 	if engine.sd_left > 0:
 		top_lbl.text += "  ·  AUTODISTRUZIONE fra %d" % engine.sd_left
@@ -334,6 +334,9 @@ func _info(a: String) -> void:
 			s += " con " + engine.wname(engine.wtype(engine.crew[c]["w"]))
 		if not engine.awake(c):
 			s += " [stordito]"
+		if engine.mutiny():
+			var tm := engine.team_of(c)
+			s += " [%s]" % ("Capitano" if tm == 0 else ("Primo Uff." if tm == 2 else "senza padrone"))
 		parts.append(s)
 	var cnt := {}
 	var st := 0
@@ -517,6 +520,19 @@ func _submit(r) -> void:
 	engine.provide_decision(r)
 
 
+func _seat() -> int:
+	return int(pending.get("seat", 0))
+
+
+## Piano d'attacco suggerito dall'IA per un'area (mostri, o avversari nell'ammutinamento).
+func _sug_plan(a: String) -> Array:
+	var ai: AGTAI = engine.ais[_seat()]
+	var p := ai._plan_area(engine, a) if not engine.mons_at(a).is_empty() else []
+	if p.is_empty() and engine.mutiny():
+		p = ai._plan_crew_area(engine, a)
+	return p
+
+
 func _clear_box() -> void:
 	for c in dec_box.get_children():
 		c.queue_free()
@@ -619,7 +635,7 @@ func _build_setup() -> void:
 		hb.add_child(ob)
 		dec_box.add_child(hb)
 	_foot_btn("Suggerisci", func():
-		var r: Dictionary = engine.ais[0].decide(engine, 0, pending)
+		var r: Dictionary = engine.ais[_seat()].decide(engine, _seat(), pending)
 		for k in r:
 			setup_sel[int(k)] = r[k]
 			engine.crew[int(k)]["loc"] = r[k]
@@ -815,7 +831,7 @@ func _build_grab() -> void:
 		b.pressed.connect(func(): _submit(ii))
 		hb.add_child(b)
 		dec_box.add_child(hb)
-	_foot_btn("Suggerisci", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+	_foot_btn("Suggerisci", func(): _submit(engine.ais[_seat()].decide(engine, _seat(), pending)))
 	_foot_btn("Armi pronte!", func(): _submit(-1), true)
 
 
@@ -854,11 +870,13 @@ func _build_cmove() -> void:
 			if ss["act"] == "escape":
 				_add_btn(str(ss["label"]), func(): _escape_dialog(ss["b"]))
 			else:
-				_add_btn(str(ss["label"]), func(): _submit({"act": ss["act"], "c": ss["c"]}))
+				var r := ss.duplicate()
+				r.erase("label")
+				_add_btn(str(ss["label"]), func(): _submit(r))
 		_add_btn("Scegli un altro membro", func():
 			sel_crew = -1
 			_build_decision())
-	_foot_btn("Suggerisci una mossa", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+	_foot_btn("Suggerisci una mossa", func(): _submit(engine.ais[_seat()].decide(engine, _seat(), pending)))
 	if not disc or engine.moved.size() >= 1:
 		_foot_btn("Fine movimento", func(): _submit({}), true)
 
@@ -898,7 +916,7 @@ func _build_cattack() -> void:
 		board.highlight[a] = UI.RED
 	if plan_area == "" or not (plan_area in areas):
 		_add_text("Tocca un'area in rosso per preparare l'attacco: chi può colpirla, con le mani o con l'arma.", UI.MUTED)
-		_foot_btn("Suggerisci un attacco", func(): _submit(engine.ais[0].decide(engine, 0, pending)))
+		_foot_btn("Suggerisci un attacco", func(): _submit(engine.ais[_seat()].decide(engine, _seat(), pending)))
 		_foot_btn("Fine degli attacchi", func(): _submit({}), true)
 		return
 	board.selected_area = plan_area
@@ -914,6 +932,7 @@ func _build_cattack() -> void:
 		by_crew[cm[0]].append(cm[1])
 	for c in by_crew:
 		var opts := [["—", null]]
+		var foes: Array = engine.enemies_at(plan_area, c) if engine.mutiny() else []
 		for usew in by_crew[c]:
 			if usew:
 				var t := engine.wtype(engine.crew[c]["w"])
@@ -923,11 +942,16 @@ func _build_cattack() -> void:
 				if kind == "single":
 					for i in ms.size():
 						opts.append(["%s su %s %s%s" % [D.WEAPONS[t]["short"], LETTERS[i % 26], engine.mname(ms[i]), eff], [c, true, ms[i]]])
-				else:
+					var kc: String = D.VS_CREW.get(t, "none")
+					for f in foes:
+						opts.append(["%s su %s [%s]" % [D.WEAPONS[t]["short"], engine.cdef(f)["short"], {"kill3": "3 dadi", "kill4": "4 dadi", "kill5": "5 dadi", "stun5": "stordisce", "slow": "rallenta", "none": "nessun effetto"}[kc]], [c, true, f + D.CREW_T]])
+				elif not ms.is_empty() or kind == "blast":
 					opts.append(["%s su tutta l'area%s" % [D.WEAPONS[t]["short"], eff], [c, true, -1]])
 			else:
 				for i in ms.size():
 					opts.append(["Mani nude (%dd) su %s %s" % [engine.cdef(c)["att"], LETTERS[i % 26], engine.mname(ms[i])], [c, false, ms[i]]])
+				for f in foes:
+					opts.append(["Mani nude (%dd) su %s (cost. %d)" % [engine.cdef(c)["att"], engine.cdef(f)["short"], engine.cdef(f)["con"]], [c, false, f + D.CREW_T]])
 		var hb := HBoxContainer.new()
 		hb.add_child(UI.icon_rect(UI.crew_tex(engine.crew[c]["k"]), Vector2(40, 40)))
 		var ob := OptionButton.new()
@@ -953,7 +977,7 @@ func _build_cattack() -> void:
 	_plan_summary_c()
 	_foot_btn("Suggerisci", func():
 		plan = {}
-		for x in engine.ais[0]._plan_area(engine, plan_area):
+		for x in _sug_plan(plan_area):
 			plan[int(x[0])] = x
 		_build_decision())
 	_foot_btn("Attacca!", func():
@@ -973,8 +997,18 @@ func _plan_summary_c() -> void:
 	# probabilità indicativa di uccidere ogni mostro con i dadi «a mani nude» e le armi note che uccidono
 	board.crew_tags = {}
 	var kill := {}
+	var fk := {}
 	for c in plan:
 		var x: Array = plan[c]
+		if int(x[2]) >= D.CREW_T:
+			var f: int = int(x[2]) - D.CREW_T
+			var kc: String = "hand" if not x[1] else D.VS_CREW.get(engine.wtype(engine.crew[c]["w"]), "none")
+			if kc == "hand":
+				fk[f] = fk.get(f, 0) + int(engine.cdef(c)["att"])
+			elif kc.begins_with("kill"):
+				fk[f] = fk.get(f, 0) + int(kc.substr(4))
+			board.crew_tags[c] = "✓"
+			continue
 		if not x[1]:
 			kill[x[2]] = kill.get(x[2], 0) + int(engine.cdef(c)["att"])
 		else:
@@ -988,6 +1022,10 @@ func _plan_summary_c() -> void:
 	for m in kill:
 		if engine.mon.has(m):
 			parts.append("%s %s: %dd → %d%%" % [board.tags.get(m, "?"), engine.mname(m), kill[m], int(round(AGTAI.p_at_least(kill[m], engine.mcon(m)) * 100))])
+	for f in fk:
+		var pc := int(round(AGTAI.p_at_least(fk[f], int(engine.cdef(f)["con"])) * 100))
+		parts.append("%s: %dd → %d%%" % [engine.cdef(f)["short"], fk[f], pc])
+		board.crew_tags[f] = "%d%%" % pc
 	status_lbl.text = ", ".join(parts)
 	board.refresh()
 
@@ -1074,7 +1112,7 @@ func _on_area_click(a: String) -> void:
 			if a in pending["areas"]:
 				plan_area = a
 				plan = {}
-				for x in engine.ais[0]._plan_area(engine, a):
+				for x in _sug_plan(a):
 					plan[int(x[0])] = x
 				_build_decision()
 
@@ -1124,8 +1162,9 @@ func _on_end(res: Dictionary) -> void:
 	vb.add_theme_constant_override("separation", 14)
 	pc.add_child(vb)
 	var w: String = res.get("winner", "")
-	var t := UI.title({"crew": "Vince l'Equipaggio!", "mon": "Vincono le Cose Verdi!", "draw": "Pareggio!"}.get(w, "Fine"), 72,
-		UI.BLUE if w == "crew" else (UI.GREEN if w == "mon" else UI.YELLOW))
+	var t := UI.title({"crew": "Vince l'Equipaggio!", "mon": "Vincono le Cose Verdi!", "draw": "Pareggio!",
+		"cap": "Vince il Capitano!", "fo": "Vince il Primo Ufficiale!"}.get(w, "Fine"), 72,
+		UI.BLUE if w in ["crew", "cap"] else (UI.GREEN if w == "mon" else (UI.ORANGE if w == "fo" else UI.YELLOW)))
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(t)
 	var r0 := UI.label(str(res.get("reason", "")), 26, UI.INK, UI.font_bold)
@@ -1133,6 +1172,8 @@ func _on_end(res: Dictionary) -> void:
 	vb.add_child(UI.wrap(r0, 960))
 	var vp: Array = res.get("vp", [0, 0])
 	var sc := UI.heading("Punti vittoria — Equipaggio: %s   ·   Cose Verdi: %s" % [AGTEngine._fmt(vp[0]), AGTEngine._fmt(vp[1])], 32, UI.ORANGE)
+	if vp.size() >= 3:
+		sc.text = "Punti — Capitano: %s   ·   Primo Ufficiale: %s   ·   Cose Verdi: %s" % [AGTEngine._fmt(vp[0]), AGTEngine._fmt(vp[2]), AGTEngine._fmt(vp[1])]
 	sc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(sc)
 	for bt in engine.boats:
