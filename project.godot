@@ -9,7 +9,7 @@ run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.4")
 config/icon="res://assets/misc/mostro.png"
 boot_splash/bg_color=Color(0.04, 0.09, 0.05, 1)
-boot_splash/image="res://assets/misc/mostro.png"
+boot_splash/image="res://assets/misc/caricamento.png"
 boot_splash/fullsize=false
 boot_splash/use_filter=true
 
