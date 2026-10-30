@@ -26,7 +26,8 @@ repository è pubblico).
   verso Snudl-1 e punti vittoria.
 - **Varianti** dal menu: un Adulto in più per le Cose Verdi; il Comunicatore a due frequenze; «Cresce» che fa
   deporre le uova (regola TSR); l'**Epilogo alternativo** (35 eventi col d10, scialuppe senza scorte, danneggiate
-  o perse, e i bonus dei membri dell'equipaggio).
+  o perse, e i bonus dei membri dell'equipaggio), raccontato come una **storia illustrata**: per ogni paragrafo
+  una delle 35 vignette (`assets/epilogo/`), il racconto, i tiri e le scelte del viaggio.
 - **Fuori dalla Znutar** (variante): lo scafo attorno alla nave e quattro zone di spazio, camere stagne
   (anche chiuse a distanza dal Ponte), tute a reazione, carrelli elevatori che scagliano le Cose Verdi nello
   spazio, la tuta della Mascotte, scialuppe che volano attorno alla nave, sparano sullo scafo e usano il getto

@@ -48,6 +48,30 @@ func _run() -> void:
 		await shot("online")
 		quit()
 		return
+	if mode == "book":
+		# la storia illustrata dell'Epilogo alternativo, su una Lancia con mezzo equipaggio
+		main.start_game({"seats": [{"name": "Equipaggio", "ai": true, "level": 1}, {"name": "Cose Verdi", "ai": true, "level": 1}],
+			"ai_delay": 60.0, "opts": {"alt_epilogue": true}, "seed": int(OS.get_environment("AGT_SEED")) if OS.get_environment("AGT_SEED") != "" else 4})
+		await wait(20)
+		var v = main.current
+		var e: AGTEngine = v.engine
+		e.ai_delay = 0.0
+		var bt := {"b": "cockboat", "crew": [0, 3, 6, 10, 15, 21], "survivors": [], "fate": "", "team": 0}
+		for id in bt["crew"]:
+			e.crew[id]["state"] = "boat"
+		e._epilogue_alt(bt)
+		var last := -1
+		for k in 400:
+			await wait(5)
+			if v.book == null:
+				break
+			var pl: String = v.book.para_lbl.text + v.book.title_lbl.text
+			if pl.hash() != last:
+				last = pl.hash()
+				await wait(20)
+				await shot("libro_%02d" % k)
+		quit()
+		return
 	if mode == "rules":
 		main.show_rules()
 		await wait(5)

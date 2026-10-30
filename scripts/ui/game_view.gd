@@ -42,6 +42,8 @@ var setup_sel: Dictionary = {}
 var place_l := "A"
 var plan: Dictionary = {}           # pianificazione attacco: chiave -> scelta
 var plan_area := ""
+var book = null                     # storia illustrata dell'Epilogo alternativo
+var _book_chose := -1
 
 
 func _ready() -> void:
@@ -409,6 +411,24 @@ func _on_log(t: String) -> void:
 
 func _on_fx(kind: String, data: Dictionary) -> void:
 	match kind:
+		"epi_start":
+			if book == null:
+				book = preload("res://scripts/ui/epilogue_book.gd").new()
+				book.view = self
+				book.engine = engine
+				add_child(book)
+			engine.epi_wait = true
+			book.chapter(str(data["b"]), data["crew"])
+		"epi_page":
+			if book != null:
+				if int(data["para"]) == _book_chose:
+					_book_chose = -1
+					engine.epi_continue.call_deferred()   # la scelta l'ha appena fatta chi guarda
+				else:
+					book.show_page(int(data["para"]), data["lines"], data["crew"])
+		"epi_end":
+			if book != null:
+				book.show_end(str(data["fate"]), data["survivors"], int(data["years"]))
 		"dice":
 			_show_dice(data["dice"], str(data.get("info", "")), int(data.get("total", 0)))
 		"kill_crew":
@@ -516,6 +536,12 @@ func _show_chit(ch: String, t: String) -> void:
 # ================================================================ decisioni
 
 func _on_decision(req: Dictionary) -> void:
+	if book != null and req["type"] == "pick" and str(req.get("ctx", "")).begins_with("alt"):
+		var para := int(req.get("para", -1))
+		book.show_choice(req, func(i):
+			_book_chose = para
+			engine.provide_decision(i))
+		return
 	pending = req
 	sel_crew = -1
 	sel_area = ""
@@ -1180,6 +1206,9 @@ func _show_rules_popup() -> void:
 
 
 func _on_end(res: Dictionary) -> void:
+	if book != null:
+		book.queue_free()
+		book = null
 	pending = {}
 	_clear_box()
 	if online != null:

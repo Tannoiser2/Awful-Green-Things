@@ -31,6 +31,7 @@ signal decision_requested(req: Dictionary)
 signal decision_provided(result)
 signal game_ended(result: Dictionary)
 signal fx(kind: String, data: Dictionary)
+signal epi_next                  # la storia illustrata dell'epilogo: «Avanti»
 
 const D = preload("res://scripts/data/agt_data.gd")
 const CREW_SEAT := 0
@@ -223,7 +224,10 @@ func pick(seat: int, ctx: String, title: String, options: Array, extra := {}) ->
 	for k in extra:
 		req[k] = extra[k]
 	var c = await decide(seat, req)
-	return clampi(int(c) if (c is int or c is float) else 0, 0, options.size() - 1)
+	var ci := clampi(int(c) if (c is int or c is float) else 0, 0, options.size() - 1)
+	if ctx.begins_with("alt"):
+		log_msg("   Si decide: %s." % options[ci])
+	return ci
 
 
 func choose_loc(seat: int, ctx: String, title: String, allowed: Array) -> String:
@@ -3572,6 +3576,23 @@ static func _tab(r: int, t: Array) -> int:
 	return int(t[t.size() - 1][1])
 
 
+## Storia illustrata: dopo ogni paragrafo dell'Epilogo alternativo la vista mostra la vignetta, il racconto
+## e i tiri; se epi_wait è acceso (c'è qualcuno a guardare) si aspetta «Avanti».
+var epi_wait := false
+
+func _epi_page(bt: Dictionary, para: int, n0: int, people: Array) -> void:
+	var lines := []
+	for l in log_lines.slice(n0):
+		lines.append(str(l).strip_edges())
+	_fx("epi_page", {"b": bt["b"], "para": para, "lines": lines, "crew": people.duplicate()})
+	if epi_wait and not abort:
+		await epi_next
+
+
+func epi_continue() -> void:
+	epi_next.emit()
+
+
 ## Epilogo alternativo (35 eventi, d10, stato della scialuppa e bonus dei membri dell'equipaggio).
 func _epilogue_alt(bt: Dictionary) -> void:
 	var people: Array = bt["crew"].duplicate()
@@ -3581,6 +3602,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 		if wpn[w]["loc"] == bt["b"] and int(wpn[w]["c"]) == -1:
 			weapons.append(wpn[w]["t"])
 	log_msg("Epilogo alternativo: il viaggio %s." % D.BOATS[bt["b"]]["of"])
+	_fx("epi_start", {"b": bt["b"], "crew": people.duplicate()})
 	var low := false
 	var damaged := false
 	var lost := false
@@ -3597,6 +3619,9 @@ func _epilogue_alt(bt: Dictionary) -> void:
 		var r := 0
 		var yrs := 0
 		var set_low := false
+		var cur := step
+		var n0 := log_lines.size()
+		x["para"] = step
 		match step:
 			1:
 				var c := await pick(int(bt.get("team", 0)), "alt1", "%s: che rotta?" % bn,
@@ -3675,10 +3700,12 @@ func _epilogue_alt(bt: Dictionary) -> void:
 			11:
 				log_msg("   %s scompare nel nulla. Nessuno tornerà." % bn)
 				people = []
+				await _epi_page(bt, cur, n0, people)
 				break
 			12:
 				log_msg("   %s raggiunge Snudl-1 dopo %d anni!" % [bn, years])
 				fate = "home"
+				await _epi_page(bt, cur, n0, people)
 				break
 			13:
 				r = d10()
@@ -3729,6 +3756,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				else:
 					log_msg("   Irreparabile: l'equipaggio naufraga e perisce (%d)." % r)
 					people = []
+				await _epi_page(bt, cur, n0, people)
 				break
 			19:
 				yrs = 1
@@ -3788,6 +3816,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				if r <= 3:
 					log_msg("   I motori del relitto esplodono: nessun superstite.")
 					people = []
+					await _epi_page(bt, cur, n0, people)
 					break
 				log_msg("   L'equipaggio pilota il relitto fino a Snudl-1.")
 				step = 12
@@ -3799,6 +3828,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				else:
 					log_msg("   La scialuppa è distrutta.")
 					people = []
+					await _epi_page(bt, cur, n0, people)
 					break
 			30:
 				yrs = 1
@@ -3811,6 +3841,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				if r <= 3:
 					log_msg("   L'equipaggio resta intrappolato nel tempo.")
 					people = []
+					await _epi_page(bt, cur, n0, people)
 					break
 				elif r <= 6:
 					log_msg("   I circuiti del portale vanno in corto.")
@@ -3842,6 +3873,7 @@ func _epilogue_alt(bt: Dictionary) -> void:
 				if low_years > 10:
 					log_msg("   Le scorte sono finite: l'equipaggio muore di fame.")
 					people = []
+					await _epi_page(bt, cur, n0, people)
 					break
 		if set_low and not low:
 			low = true
@@ -3849,7 +3881,9 @@ func _epilogue_alt(bt: Dictionary) -> void:
 			log_msg("   Le scorte basteranno ancora dieci anni.")
 		if _no_humans(people):
 			people = []
+			await _epi_page(bt, cur, n0, people)
 			break
+		await _epi_page(bt, cur, n0, people)
 	if guard >= 120:
 		log_msg("   Il viaggio non finisce mai… nessuno torna a casa.")
 		people = []
@@ -3858,6 +3892,9 @@ func _epilogue_alt(bt: Dictionary) -> void:
 		fate = "lost"
 	bt["survivors"] = people
 	bt["fate"] = fate
+	_fx("epi_end", {"b": bt["b"], "survivors": people.duplicate(), "fate": fate, "years": years})
+	if epi_wait and not abort:
+		await epi_next
 
 
 func _no_humans(people: Array) -> bool:

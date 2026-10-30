@@ -73,7 +73,8 @@ const OPTIONAL := [
 • La scialuppa può restare [b]senza scorte[/b] (dopo altri dieci anni senza rifornimenti l'equipaggio muore di fame), [b]danneggiata[/b] o [b]persa[/b]: ognuna di queste condizioni peggiora alcuni tiri.
 • Incontri con alieni ostili o intelligenti (evitare, attaccare o comunicare), buchi neri, nubi cosmiche, tempeste ioniche, malattie, relitti alieni, un portale temporale e le malvagie capre spaziali di antimateria.
 • Alcuni membri aiutano: il Pilota, il Capitano, il Primo Ufficiale, il Dottore e l'Infermiere, il Marconista, il Tecnico, il Motorista e l'Ufficiale di Macchina. In battaglia la Pistola, il Carburante o la Granata aggiungono i dadi di un gettone pescato a caso.
-• Chi resta naufrago su un pianeta abitabile conta per metà dei punti."""],
+• Chi resta naufrago su un pianeta abitabile conta per metà dei punti.
+• Il viaggio si gioca come una storia illustrata: una vignetta per ogni paragrafo, con il racconto, i tiri e le scelte."""],
 	["Solitario: il Capitano Yid", """Il Capitano torna sulla Znutar con il Disco e trova tutti addormentati: le Cose Verdi sono in letargo e l'equipaggio è la loro dispensa.
 • [b]Preparazione[/b]: tutto l'equipaggio (tranne il Capitano) e tutte le Cose Verdi, Frammenti compresi, sono [b]pedine coperte[/b] mescolate: una in ogni area tranne gli hangar, due in più dove si trovano armi, altre due in Controllo danni e nelle due Officine, quattro in più su ogni Ponte e il resto in Sala macchine. Il Capitano parte dall'Hangar del Disco. Un Estintore, un Comunicatore e il gettone «5 dadi per uccidere» escono dal gioco.
 • [b]Turno[/b]: prima l'equipaggio (armi, movimento, [b]allarme[/b], attacco), poi le Cose Verdi sveglie. Chi entra in un'area con pedine coperte si ferma; nell'allarme si scoprono: le Cose Verdi si svegliano e attaccano subito, i membri dell'equipaggio restano [b]prigionieri nella melma[/b] finché nella loro area c'è l'equipaggio e non ci sono più Cose Verdi.
